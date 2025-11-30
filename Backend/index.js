@@ -4,10 +4,13 @@ const mysql2 = require('mysql2');
 const cors = require('cors');
 
 const app = express();
+
+app.use(express.json());              
+app.use(cors({ origin: "http://localhost:3000" }));
+
+app.use(express.urlencoded({ extended: true }));
 const port = process.env.PORT || 4000;
 
-app.use(cors({ origin: "http://localhost:3000" }));
-app.use(express.json());
 
 const db = mysql2.createConnection({
     host: process.env.DB_HOST || 'localhost',

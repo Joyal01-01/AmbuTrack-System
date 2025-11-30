@@ -1,36 +1,26 @@
-import React, { useEffect, useState } from "react";
-import axios from "axios";
+import React from "react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import AdminDashboard from "./components/AdminDashboard";
+import Users from "./components/Users";
+import RequestList from "./components/RequestList";
+import RequestForm from "./components/RequestForm";
+import Ambulances from "./components/Ambulances";
+import Trips from "./components/Trips";
+import MapView from "./components/MapView";
 
-function App() {
-  const [users, setUsers] = useState([]);
-
-  useEffect(() => {
-    axios.get("http://localhost:4000/users")
-      .then(res => {
-        setUsers(res.data);
-      })
-      .catch(err => {
-        console.error("Error fetching users:", err);
-      });
-  }, []);
-
+export default function App() {
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>AmbuTrack Users</h1>
-
-      {users.length === 0 ? (
-        <p>No users found.</p>
-      ) : (
-        <ul>
-          {users.map((u, index) => (
-            <li key={index}>
-              <strong>{u.name}</strong> — {u.email} ({u.role})
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<AdminDashboard />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/requests" element={<RequestList />} />
+        <Route path="/requests/new" element={<RequestForm />} />
+        <Route path="/ambulances" element={<Ambulances />} />
+        <Route path="/trips" element={<Trips />} />
+        <Route path="/map" element={<MapView />} />
+    </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;
+    
