@@ -1,8 +1,8 @@
 import React from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AdminDashboard from "./components/AdminDashboard";
-import Users from "./components/Users";
-import RequestList from "./components/RequestList";
+import Users from "./components/User";
+import RequestList from "./components/RequestsList";
 import RequestForm from "./components/RequestForm";
 import Ambulances from "./components/Ambulances";
 import Trips from "./components/Trips";
