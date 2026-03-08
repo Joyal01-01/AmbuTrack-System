@@ -19,25 +19,30 @@ export default function Register(){
 		try{
 			setSending(true);
 			const res = await api.post('/send-otp',{ email });
-			if(res.data && res.data.otp){
-				alert('OTP sent (in dev returned): ' + res.data.otp);
+			if(res.data){
+				// Prefer server-provided message
+				if(res.data.emailed) alert('OTP sent to ' + email);
+				else if(res.data.otp) alert('OTP (dev): ' + res.data.otp);
+				else alert('OTP requested — check your email');
 				setOtpSent(true);
 			}else{
-				alert('OTP requested — check your email');
-				setOtpSent(true);
+				alert('Unexpected response from server');
 			}
-		}catch(e){ alert('Failed to send OTP') }
-		setSending(false);
+		}catch(err){
+			const msg = err?.response?.data || err.message || 'Failed to send OTP';
+			alert('Failed to send OTP: ' + msg);
+		}finally{ setSending(false); }
 	}
 
 	const register = async ()=>{
 		try{
 			if(!otpSent) return alert('Send OTP first');
-			await api.post("/register",{ name, email, password, role, otp });
-			alert("Registered Successfully — please login")
+			const res = await api.post("/register",{ name, email, password, role, otp });
+			alert(res?.data?.message || 'Registered Successfully — please login');
 			navigate("/");
 		}catch(err){
-			alert("Error: " + (err?.response?.data || err.message || ''))
+			const msg = err?.response?.data || err.message || 'Registration failed';
+			alert('Error: ' + JSON.stringify(msg));
 		}
 	}
 

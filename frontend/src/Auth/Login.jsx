@@ -39,7 +39,8 @@ export default function Login(){
 			}
 
 		}catch(err){
-			alert("Server Error")
+			const msg = err?.response?.data || err.message || 'Server Error';
+			alert('Login failed: ' + JSON.stringify(msg));
 		}
 	}
 
