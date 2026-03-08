@@ -1,7 +1,9 @@
+}
 body{
 margin:0;
 font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-background: linear-gradient(180deg, #f4f7ff 0%, #eef5ff 60%);
+background: linear-gradient(180deg, #fffafa 0%, #fff 60%);
+color:#222;
 }
 
 input{
@@ -33,14 +35,14 @@ margin:10px;
 	text-align:left;
 }
 .card-head{ display:flex; gap:16px; align-items:center }
-.avatar{ width:56px; height:56px; border-radius:12px; background:linear-gradient(135deg,#2f6fed,#6cd1ff); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:20px }
+.avatar{ width:56px; height:56px; border-radius:12px; background:linear-gradient(135deg,#c62828,#ff8a80); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:20px }
 .who h1{ margin:0; font-size:20px }
 .muted{ color:#556; font-size:0.95rem }
 
 .actions{ display:flex; gap:12px; justify-content:flex-start; margin-top:18px; }
-.btn{ background:#2f6fed; color:#fff; padding:10px 16px; border-radius:8px; text-decoration:none; border:none; cursor:pointer; box-shadow: 0 6px 14px rgba(47,111,237,0.12) }
+.btn{ background:#c62828; color:#fff; padding:10px 16px; border-radius:8px; text-decoration:none; border:none; cursor:pointer; box-shadow: 0 6px 14px rgba(198,40,40,0.12) }
 .btn:hover{ transform:translateY(-1px) }
-.btn-outline{ background:transparent; color:#2f6fed; border:1px solid #deeafc }
+.btn-outline{ background:transparent; color:#c62828; border:1px solid #fde0e0 }
 .btn-ghost{ background:transparent; color:#667; border:0 }
 .btn-small{ padding:6px 10px; font-size:0.9rem }
 
@@ -53,7 +55,7 @@ margin:10px;
 .map-page{ display:block; height:100vh; }
 .map-header{ display:flex; align-items:center; justify-content:space-between; padding:12px 18px; background:#f8f9fb; border-bottom:1px solid #eee }
 .map-container{ position:relative; display:flex; height: calc(100vh - 62px); gap:14px; padding:12px }
-.map-area{ flex:1; position:relative; border-radius:12px; overflow:hidden; box-shadow: 0 8px 24px rgba(20,30,60,0.06) }
+.map-area{ flex:1; position:relative; border-radius:12px; overflow:hidden; box-shadow: 0 8px 24px rgba(20,30,60,0.06); height:60vh }
 .leaflet-map{ flex:1; height:100% }
 .google-map{ width:100%; height:100% }
 .panel{ width:320px; background:linear-gradient(180deg,#ffffff,#fbfdff); border-radius:12px; padding:14px; overflow:auto; box-shadow: 0 8px 26px rgba(20,30,60,0.06) }
@@ -62,7 +64,7 @@ margin:10px;
 .panel li{ display:flex; align-items:center; gap:12px; padding:10px; border-radius:8px; margin-bottom:8px; cursor:pointer; transition:transform .12s ease, box-shadow .12s ease }
 .panel li:hover{ transform:translateY(-4px); box-shadow: 0 8px 18px rgba(34,50,90,0.06) }
 
-.ambulance-item .dot{ width:12px; height:12px; border-radius:50%; background:linear-gradient(135deg,#2f6fed,#6cd1ff) }
+.ambulance-item .dot{ width:12px; height:12px; border-radius:50%; background:linear-gradient(135deg,#c62828,#ff8a80) }
 .ambulance-item .meta{ font-size:0.95rem }
 .ambulance-item .driver{ font-weight:600 }
 .ambulance-item .coords{ color:#688; font-size:0.85rem }
@@ -70,7 +72,7 @@ margin:10px;
 
 .map-controls{ position:absolute; left:12px; top:12px; display:flex; gap:8px; background:rgba(255,255,255,0.9); padding:8px; border-radius:10px; box-shadow:0 8px 20px rgba(20,30,60,0.06) }
 .map-controls input{ padding:8px 10px; border-radius:8px; border:1px solid #e6eefc; min-width:180px }
-.map-controls button{ padding:8px 10px; border-radius:8px; border:0; background:#2f6fed; color:#fff }
+.map-controls button{ padding:8px 10px; border-radius:8px; border:0; background:#c62828; color:#fff }
 
 .map-debug{ display:flex; align-items:center; color:#345; font-size:0.85rem; margin-left:8px }
 
@@ -78,5 +80,6 @@ margin:10px;
 
 @media (max-width:900px){
 	.map-container{ flex-direction:column }
+	.map-area{ height:70vh }
 	.panel{ width:100%; border-left:none; border-top:1px solid #eee }
 }

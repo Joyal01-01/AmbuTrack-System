@@ -2,7 +2,7 @@ import axios from "axios";
 
 const api = axios.create({
 
-baseURL:"http://localhost:5000"
+baseURL: (typeof window !== 'undefined' && window.__BACKEND_URL__) ? window.__BACKEND_URL__ : "http://localhost:5001"
 
 })
 

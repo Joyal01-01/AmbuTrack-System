@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import api from '../api.js'
-import Navbar from '../components/Navbar.jsx'
+import api from '../api'
+import Navbar from '../component/Navbar'
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([])

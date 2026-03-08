@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import api from "../api";
+import Navbar from '../component/Navbar';
 
 export default function Dashboard(){
 
@@ -27,6 +28,8 @@ export default function Dashboard(){
 	const initial = user?.name ? user.name.charAt(0).toUpperCase() : '?'
 
 	return(
+		<>
+		<Navbar />
 		<div className="dashboard dashboard-hero">
 			<div className="card center-card">
 				<div className="card-head">
@@ -60,6 +63,7 @@ export default function Dashboard(){
 
 			</div>
 		</div>
+		</>
 	)
 
 }
