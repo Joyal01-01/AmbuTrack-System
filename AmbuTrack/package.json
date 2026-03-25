@@ -1,0 +1,12 @@
+{
+  "name": "ambutrack",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm:dev-backend\" \"npm:dev-frontend\"",
+    "dev-backend": "cd Backend && npm run dev",
+    "dev-frontend": "cd frontend && npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

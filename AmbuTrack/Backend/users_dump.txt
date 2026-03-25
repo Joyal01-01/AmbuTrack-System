@@ -1,0 +1,44 @@
+[
+  {
+    "id": 15,
+    "email": "joyalpoudel234@gmail.com",
+    "role": "driver",
+    "name": "Joyal Poudel"
+  },
+  {
+    "id": 16,
+    "email": "abhishek987ff@gmail.com",
+    "role": "patient",
+    "name": "Abhishek Goswami"
+  },
+  {
+    "id": 17,
+    "email": "bishwashkafle0102@gmail.com",
+    "role": "patient",
+    "name": "Bishwash Kafle"
+  },
+  {
+    "id": 18,
+    "email": "admin@gmail.com",
+    "role": "admin",
+    "name": "System Admin"
+  },
+  {
+    "id": 19,
+    "email": "patient@test.com",
+    "role": "patient",
+    "name": "Test Patient"
+  },
+  {
+    "id": 20,
+    "email": "driver@test.com",
+    "role": "driver",
+    "name": "Test Driver"
+  },
+  {
+    "id": 21,
+    "email": "admin@test.com",
+    "role": "admin",
+    "name": "Test Admin"
+  }
+]

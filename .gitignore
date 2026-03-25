@@ -1,0 +1,11 @@
+# AmbuTrack System Gitignore
+node_modules/
+.env
+dist/
+build/
+*.log
+.DS_Store
+tmp/
+.temp/
+Backend/uploads/*
+!Backend/uploads/.gitkeep

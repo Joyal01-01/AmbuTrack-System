@@ -1,0 +1,5 @@
+# Ignore uploads and node_modules
+uploads/*
+node_modules/*
+*.log
+.git
