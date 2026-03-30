@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import api from "../api";
@@ -10,7 +10,7 @@ function Toast({ message, type, onDone }) {
   useEffect(() => {
     const t = setTimeout(onDone, 3000);
     return () => clearTimeout(t);
-  }, []);
+  }, [onDone]);
   const Icon = type === 'success' ? CheckCircle : type === 'error' ? AlertTriangle : Info;
   return (
     <div className={`toast ${type}`}>
@@ -23,7 +23,7 @@ export default function Setting() {
   const { t } = useTranslation();
   const { darkMode, toggleDarkMode } = useTheme();
   const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('user') || 'null') } catch (e) { return null }
+    try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
   });
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -51,6 +51,7 @@ export default function Setting() {
     api.post('/api/user/2fa', { enable: twofa }, { headers: { 'x-auth-token': token } })
        .then((res) => setTwofa(res.data.twofa))
        .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
 
@@ -74,8 +75,7 @@ export default function Setting() {
       localStorage.setItem('user', JSON.stringify(updated));
       setUser(updated);
       addToast('Profile updated successfully!', 'success');
-    } catch (e) {
-      console.error(e);
+    } catch {
       addToast('Failed to update profile', 'error');
     }
     setSaving(false);
@@ -91,8 +91,7 @@ export default function Setting() {
       localStorage.setItem('user', JSON.stringify(updated));
       setUser(updated);
       addToast(`Two-factor auth ${res.data.twofa ? 'enabled' : 'disabled'}`, 'success');
-    } catch (e) {
-      console.error(e);
+    } catch {
       addToast('Failed to update 2FA', 'error');
     }
   }
@@ -111,10 +110,9 @@ export default function Setting() {
     try {
       await api.delete('/api/user', { headers: { 'x-auth-token': token } });
       localStorage.clear();
-      try { socket.disconnect(); } catch (e) {}
+      try { window.dispatchEvent(new Event('ambutrack-logout')); } catch { /* ignore */ }
       navigate('/');
-    } catch (e) {
-      console.error(e);
+    } catch {
       addToast('Failed to delete account', 'error');
     }
   }
@@ -122,7 +120,8 @@ export default function Setting() {
   function logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    try { socket.disconnect(); } catch (e) {}
+    localStorage.removeItem('driver_online_status');
+    try { window.dispatchEvent(new Event('ambutrack-logout')); } catch { /* ignore */ }
     navigate('/login');
   }
 
@@ -141,8 +140,8 @@ export default function Setting() {
       addToast('Password changed successfully!', 'success');
       setPassForm({ current: '', new: '', confirm: '' });
       setShowPassword(false);
-    } catch (e) {
-      addToast(e.response?.data || 'Failed to change password', 'error');
+    } catch {
+      addToast(passForm.new.length < 6 ? 'Password too short' : 'Failed to change password', 'error');
     }
     setChangingPass(false);
   }

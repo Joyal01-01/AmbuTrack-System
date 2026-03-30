@@ -14,10 +14,9 @@ import {
   MapPin, Navigation, Ruler, Timer, Inbox, CheckCircle,
   AlertTriangle, Wifi, WifiOff, Settings, RefreshCw,
   LocateFixed, TrendingUp, ClipboardList, Zap, CircleDot,
-  Phone, ArrowRight, Info, X, ChevronRight, Activity
+  Phone, X, Activity
 } from "lucide-react";
 import "./DriverDashboard.css";
-import Chatbot from "../component/Chatbot";
 import NearbyHospitals from "../component/NearbyHospitals";
 
 const DEFAULT_CENTER = [27.7172, 85.324];
@@ -72,23 +71,34 @@ function Toast({ message, type, onDone }) {
     const t = setTimeout(onDone, 3000);
     return () => clearTimeout(t);
   }, [onDone]);
-  const Icon = type === "success" ? CheckCircle : type === "error" ? AlertTriangle : Info;
+  const Icon = type === "success" ? CheckCircle : type === "error" ? AlertTriangle : Activity;
   return (
     <div className={`toast ${type}`}>
       <Icon size={16} /> {message}
+      <style>{`
+        @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      `}</style>
     </div>
   );
 }
 
 // Custom Route Component
-function RoutingControl({ start, end }) {
+// Custom Route Component with improved re-render logic
+function RoutingControl({ start, end, color = "#3b82f6" }) {
   const map = useMap();
+  const routingControlRef = useRef(null);
 
   useEffect(() => {
     if (!start || !end || !start.lat || !end.lat) return;
     
+    // Clear existing route if it exists
+    if (routingControlRef.current) {
+      try { map.removeControl(routingControlRef.current); } catch { /* ignore */ }
+    }
+
     try {
-      const routingControl = L.Routing.control({
+      routingControlRef.current = L.Routing.control({
         waypoints: [
           L.latLng(start.lat, start.lng),
           L.latLng(end.lat, end.lng)
@@ -100,17 +110,19 @@ function RoutingControl({ start, end }) {
         show: false,
         createMarker: () => null,
         lineOptions: {
-          styles: [{ color: "#3b82f6", weight: 6 }]
+          styles: [{ color, weight: 6, opacity: 0.8 }]
         }
       }).addTo(map);
 
       return () => {
-        try { map.removeControl(routingControl); } catch (err) { console.warn(err); }
+        if (routingControlRef.current) {
+          try { map.removeControl(routingControlRef.current); routingControlRef.current = null; } catch { /* ignore */ }
+        }
       };
     } catch(e) {
-      console.error(e);
+      console.error("Routing error:", e);
     }
-  }, [map, start, end]);
+  }, [map, start, end, color]);
 
   return null;
 }
@@ -141,10 +153,10 @@ export default function DriverDashboard() {
     } catch { return null; }
   });
 
-  const updateLocation = (loc) => {
+  const updateLocation = useCallback((loc) => {
     setMyLocation(loc);
     localStorage.setItem('last_driver_location', JSON.stringify(loc));
-  };
+  }, []);
   const [isOnline, setIsOnline] = useState(() => localStorage.getItem('driver_online_status') === 'true');
   const [stats, setStats] = useState({
     totalTrips: 0, todayTrips: 0, todayEarnings: 0,
@@ -397,7 +409,7 @@ export default function DriverDashboard() {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, [isOnline, addToast, getUserData]);
+  }, [isOnline, addToast, getUserData, updateLocation]);
 
   async function acceptRequest(req) {
     if (!isOnline) return addToast("Go online first to accept requests", "error");
@@ -445,7 +457,7 @@ export default function DriverDashboard() {
     if (!tripOtp || tripOtp.length !== 4) return addToast("Please enter a valid 4-digit OTP", "error");
     try {
       const user = getUserData();
-      await api.post(`/api/ride-request/${activeTrip.id}/start-with-otp`, { otp: tripOtp }, { headers: { "x-auth-token": user?.token } });
+            await api.post(`/api/ride-request/${activeTrip.id}/start-with-otp`, { otp: tripOtp }, { headers: { "x-auth-token": user?.token } });
       addToast("Trip started", "success");
       setShowOtpModal(false);
       setTripOtp("");
@@ -453,6 +465,21 @@ export default function DriverDashboard() {
     } catch(err) { 
       const msg = err?.response?.data || "Failed to start trip / Invalid OTP";
       addToast(msg, "error"); 
+    }
+  }
+
+  async function setDestination(h) {
+    if (!activeTrip || activeTrip.status !== 'started') {
+      return addToast("You can only set a hospital destination after starting the trip.", "info");
+    }
+    try {
+      const user = getUserData();
+      await api.post(`/api/ride-request/${activeTrip.id}/destination`, { lat: h.lat, lng: h.lng }, { headers: { "x-auth-token": user?.token } });
+      addToast(`Destination set to ${h.name}`, "success");
+      fetchActiveTrip();
+    } catch (err) {
+      console.error("Set destination error:", err);
+      addToast("Failed to set destination", "error");
     }
   }
 
@@ -467,9 +494,29 @@ export default function DriverDashboard() {
       }
       const res = await api.post(`/api/driver/trip/${tripId}/complete`, { distance_km: distanceKm.toFixed(2) }, { headers: { "x-auth-token": user?.token } });
       addToast(`Trip completed! Fare: NPR ${res.data.fare}`, "success");
-      setActiveTrip(null); setPairedPatient(null);
-      fetchStats(); fetchTripHistory();
-    } catch { addToast("Failed to complete trip", "error"); }
+      
+      // OPTIMISTIC UPDATE: Update stats locally for instant feedback
+      const fareNum = parseFloat(res.data.fare) || 0;
+      setStats(prev => ({
+        ...prev,
+        totalTrips: prev.totalTrips + 1,
+        todayTrips: (prev.todayTrips || 0) + 1,
+        todayEarnings: (prev.todayEarnings || 0) + fareNum,
+        totalEarnings: (prev.totalEarnings || 0) + fareNum
+      }));
+
+      setActiveTrip(null); 
+      setPairedPatient(null);
+      
+      // Perform immediate fetch and a delayed follow-up fetch to ensure sync
+      fetchStats(); 
+      fetchTripHistory();
+      setTimeout(() => { fetchStats(); fetchTripHistory(); }, 2500);
+      
+    } catch (err) { 
+      console.error(err);
+      addToast("Failed to complete trip", "error"); 
+    }
   }
 
   function goOnline() {
@@ -497,7 +544,7 @@ export default function DriverDashboard() {
     addToast("You are now online", "success");
   }
 
-  function goOffline() {
+  function goOffline() { // eslint-disable-line no-unused-vars
     setIsOnline(false);
     localStorage.setItem('driver_online_status', 'false');
     const user = getUserData();
@@ -533,9 +580,16 @@ export default function DriverDashboard() {
             </div>
           </div>
         </div>
-        <button className={`toggle-btn ${isOnline ? "go-offline" : "go-online"}`} onClick={isOnline ? goOffline : goOnline}>
-          {isOnline ? <><Pause size={15} /> {t('btn_go_offline')}</> : <><Play size={15} /> {t('btn_go_online')}</>}
-        </button>
+        {isOnline ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 14, color: '#16a34a', fontWeight: 700, fontSize: '0.85rem', boxShadow: '0 2px 10px rgba(34,197,94,0.05)', animation: 'slideUp 0.4s ease-out' }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulseDot 1.5s infinite', boxShadow: '0 0 8px #22c55e' }} />
+            <span>Online — <span style={{ opacity: 0.8 }}>Locked until logout</span></span>
+          </div>
+        ) : (
+          <button className="toggle-btn go-online" onClick={goOnline}>
+            <Play size={15} /> {t('btn_go_online')}
+          </button>
+        )}
       </div>
 
       {/* Stats */}
@@ -689,17 +743,42 @@ export default function DriverDashboard() {
                   <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution='&copy; CARTO' />
                   {myLocation && <MapController center={[myLocation.lat, myLocation.lng]} />}
                   {myLocation && <Marker position={[myLocation.lat, myLocation.lng]}><Popup>{t('nav_home')}</Popup></Marker>}
-                  {pairedPatient?.lat && (
-                    <>
-                      <Marker position={[pairedPatient.lat, pairedPatient.lng]}><Popup>Patient</Popup></Marker>
-                      {myLocation && (
-                        <RoutingControl 
-                          start={myLocation} 
-                          end={{ lat: pairedPatient.lat, lng: pairedPatient.lng }} 
-                        />
-                      )}
-                    </>
-                  )}
+                  {/* Route logic: Status-based routing line */}
+                  {activeTrip && activeTrip.status === 'started' && parseFloat(activeTrip.destination_lat) && myLocation ? (
+                    <React.Fragment key={`started-${activeTrip.destination_lat}-${activeTrip.destination_lng}`}>
+                      {/* Navigate to Hospital */}
+                      <Marker position={[activeTrip.destination_lat, activeTrip.destination_lng]} icon={hospitalIcon}>
+                        <Popup>🏥 {t('btn_find_hosp')}</Popup>
+                      </Marker>
+                      <RoutingControl
+                        start={myLocation}
+                        end={{ lat: parseFloat(activeTrip.destination_lat), lng: parseFloat(activeTrip.destination_lng) }}
+                        color="#10b981" /* Green for hospital navigation */
+                      />
+                    </React.Fragment>
+                  ) : activeTrip && (activeTrip.status === 'accepted' || activeTrip.status === 'arrived') && pairedPatient?.lat && myLocation ? (
+                    <React.Fragment key={`pickup-${pairedPatient.lat}`}>
+                      {/* Navigate to Patient Pickup */}
+                      <Marker position={[pairedPatient.lat, pairedPatient.lng]}>
+                        <Popup>🚑 {t('panel_active_trip')} - {t('feat_realtime')}</Popup>
+                      </Marker>
+                      <RoutingControl 
+                        start={myLocation} 
+                        end={{ lat: pairedPatient.lat, lng: pairedPatient.lng }} 
+                        color="#3b82f6" /* Blue for pickup navigation */
+                      />
+                    </React.Fragment>
+                  ) : activeTrip && activeTrip.status === 'started' && pairedPatient?.lat && myLocation ? (
+                    <React.Fragment key={`started-no-dest-${pairedPatient.lat}`}>
+                      {/* Case where trip started but no hospital destination set yet */}
+                      <Marker position={[pairedPatient.lat, pairedPatient.lng]}><Popup>Patient pickup area</Popup></Marker>
+                      <RoutingControl 
+                        start={myLocation} 
+                        end={{ lat: pairedPatient.lat, lng: pairedPatient.lng }} 
+                        color="#f59e0b" /* Orange for transition state */
+                      />
+                    </React.Fragment>
+                  ) : null}
                   {requests.map((r) => r.lat && r.lng && (
                     <Marker key={r.id} position={[r.lat, r.lng]}><Popup>{r.name || "Patient"} (#{r.id})</Popup></Marker>
                   ))}
@@ -708,6 +787,16 @@ export default function DriverDashboard() {
                       <Popup>
                         <strong>{h.name}</strong><br/>
                         {h.type === 'hospital' ? '🏥 Hospital' : '🏨 Clinic'}
+                        {activeTrip && activeTrip.status === 'started' && (
+                          <div style={{ marginTop: 10 }}>
+                            <button 
+                              onClick={() => setDestination(h)}
+                              style={{ background: '#22c55e', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                            >
+                              <Navigation size={12} /> Set Destination
+                            </button>
+                          </div>
+                        )}
                       </Popup>
                     </Marker>
                   ))}
@@ -840,8 +929,6 @@ export default function DriverDashboard() {
           </div>
         </div>
       )}
-
-      <Chatbot role="driver" />
     </div>
   );
 }

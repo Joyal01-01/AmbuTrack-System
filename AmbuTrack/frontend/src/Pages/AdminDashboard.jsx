@@ -48,6 +48,7 @@ export default function AdminDashboard() {
   const [ambulances, setAmbulances] = useState([]);
   const [nearbyHospitals, setNearbyHospitals] = useState([]);
   const [showHospitals, setShowHospitals] = useState(true);
+  // eslint-disable-next-line no-unused-vars
   const [loading, setLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState([]);
@@ -55,12 +56,17 @@ export default function AdminDashboard() {
   const [adminForm, setAdminForm] = useState({ name: '', email: '', phone: '', password: '' });
   const [adminCreating, setAdminCreating] = useState(false);
   const [showLive, setShowLive] = useState(false);
-  const [activeTab, setActiveTab] = useState('map'); // 'map', 'approvals', 'users', 'reports'
+  const [activeTab, setActiveTab] = useState('map'); 
   const [pendingDrivers, setPendingDrivers] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [verifyingDriverId, setVerifyingDriverId] = useState(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [nepalHospitals, setNepalHospitals] = useState([]);
+  const [hospitalsLoading, setHospitalsLoading] = useState(false);
+  const [hospitalSearch, setHospitalSearch] = useState('');
+  const [hospitalFilter, setHospitalFilter] = useState('all'); 
+// 'all', 'hospital', 'clinic'
   const { darkMode } = useTheme();
   const location = useLocation();
 
@@ -68,6 +74,7 @@ export default function AdminDashboard() {
     if (location.pathname === '/manage-users') setActiveTab('users');
     else if (location.pathname === '/manage-drivers') setActiveTab('approvals');
     else if (location.pathname === '/reports') setActiveTab('reports');
+    else if (location.pathname === '/hospitals') setActiveTab('hospitals');
     else setActiveTab('map');
   }, [location.pathname]);
 
@@ -86,6 +93,7 @@ export default function AdminDashboard() {
     fetchPendingDrivers(u.token);
     fetchHospitals();
     fetchAllUsers(u.token);
+    fetchNepalHospitals();
 
     // Socket listeners for real-time updates
     socket.emit("identify", { token: u.token });
@@ -110,7 +118,7 @@ export default function AdminDashboard() {
       socket.off('new_driver_pending');
       clearInterval(interval);
     };
-  }, [showLive]);
+  }, [showLive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchStats = async (token) => {
     try {
@@ -156,7 +164,7 @@ export default function AdminDashboard() {
       setNotification("Driver approved successfully");
       fetchPendingDrivers(user.token);
       fetchStats(user.token);
-    } catch (e) {
+    } catch {
       setNotification("Approval failed");
     }
   };
@@ -166,7 +174,7 @@ export default function AdminDashboard() {
       await api.post(`/api/admin/drivers/${id}/reject`, {}, { headers: { 'x-auth-token': user.token } });
       setNotification("Driver rejected");
       fetchPendingDrivers(user.token);
-    } catch (e) {
+    } catch {
       setNotification("Rejection failed");
     }
   };
@@ -178,7 +186,7 @@ export default function AdminDashboard() {
       const res = await api.post(`/api/admin/drivers/${id}/run-ocr`, {}, { headers: { 'x-auth-token': user.token } });
       setNotification(res.data.flagged ? "OCR completed with warnings" : "OCR verified successfully");
       fetchPendingDrivers(user.token);
-    } catch (e) {
+    } catch {
       setNotification("OCR failed");
     } finally {
       setOcrLoading(false);
@@ -203,6 +211,19 @@ export default function AdminDashboard() {
       setNearbyHospitals(res.data || []);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const fetchNepalHospitals = async () => {
+    if (nepalHospitals.length > 0) return; // Already loaded
+    setHospitalsLoading(true);
+    try {
+      const res = await api.get('/api/nepal-hospitals');
+      setNepalHospitals(res.data || []);
+    } catch (e) {
+      console.error('Nepal hospitals fetch error', e);
+    } finally {
+      setHospitalsLoading(false);
     }
   };
 
@@ -253,6 +274,7 @@ export default function AdminDashboard() {
                 </button>
                 <button onClick={() => setActiveTab('users')} style={{ padding: '8px', borderRadius: 8, border: 'none', background: activeTab === 'users' ? '#3b82f6' : 'transparent', color: activeTab === 'users' ? '#fff' : 'var(--muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>{t('tab_users')}</button>
                 <button onClick={() => setActiveTab('reports')} style={{ padding: '8px', borderRadius: 8, border: 'none', background: activeTab === 'reports' ? '#3b82f6' : 'transparent', color: activeTab === 'reports' ? '#fff' : 'var(--muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>{t('tab_reports')}</button>
+                <button onClick={() => { setActiveTab('hospitals'); fetchNepalHospitals(); }} style={{ padding: '8px', borderRadius: 8, border: 'none', background: activeTab === 'hospitals' ? '#22c55e' : 'transparent', color: activeTab === 'hospitals' ? '#fff' : 'var(--muted)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', gridColumn: '1 / -1' }}>🏥 Nepal Hospitals</button>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>{activeTab === 'map' ? 'Live System Monitoring' : 'Driver Verifications'}</p>
@@ -431,6 +453,78 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          ) : activeTab === 'hospitals' ? (
+            <div style={{ height: '100%', overflowY: 'auto', padding: 32 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>🏥 Hospitals &amp; Clinics in Nepal</h2>
+                  <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: '0.85rem' }}>{hospitalsLoading ? 'Loading from OpenStreetMap...' : `${nepalHospitals.filter(h => hospitalFilter === 'all' || h.type === hospitalFilter).filter(h => !hospitalSearch || h.name.toLowerCase().includes(hospitalSearch.toLowerCase()) || (h.district || '').toLowerCase().includes(hospitalSearch.toLowerCase())).length} facilities found`}</p>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Search by name or district..."
+                    value={hospitalSearch}
+                    onChange={e => setHospitalSearch(e.target.value)}
+                    style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--text)', fontSize: '0.85rem', width: 220 }}
+                  />
+                  {['all', 'hospital', 'clinic'].map(f => (
+                    <button key={f} onClick={() => setHospitalFilter(f)} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: hospitalFilter === f ? '#22c55e' : 'var(--background)', color: hospitalFilter === f ? '#fff' : 'var(--muted)', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem', textTransform: 'capitalize' }}>{f === 'all' ? 'All' : f === 'hospital' ? '🏥 Hospitals' : '🏨 Clinics'}</button>
+                  ))}
+                  <button onClick={fetchNepalHospitals} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--muted)', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem' }}>↻ Refresh</button>
+                </div>
+              </div>
+
+              {hospitalsLoading ? (
+                <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--muted)' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: 12 }}>🗺️</div>
+                  <p style={{ fontWeight: 600 }}>Fetching hospitals from OpenStreetMap...</p>
+                  <p style={{ fontSize: '0.85rem' }}>This may take up to 30 seconds for the first load.</p>
+                </div>
+              ) : (
+                <div style={{ background: 'var(--background)', borderRadius: 16, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead style={{ background: 'rgba(34,197,94,0.05)', position: 'sticky', top: 0, zIndex: 5 }}>
+                      <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                        <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>Name</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>Type</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>District</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>Phone</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>Map</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {nepalHospitals
+                        .filter(h => hospitalFilter === 'all' || h.type === hospitalFilter)
+                        .filter(h => !hospitalSearch || h.name.toLowerCase().includes(hospitalSearch.toLowerCase()) || (h.district || '').toLowerCase().includes(hospitalSearch.toLowerCase()))
+                        .map((h, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text)' }}>{h.name}</td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <span style={{ padding: '3px 8px', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, background: h.type === 'hospital' ? 'rgba(34,197,94,0.1)' : 'rgba(99,102,241,0.1)', color: h.type === 'hospital' ? '#22c55e' : '#6366f1' }}>
+                                {h.type === 'hospital' ? '🏥 Hospital' : '🏨 Clinic'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 16px', color: 'var(--muted)' }}>{h.district || h.address || '—'}</td>
+                            <td style={{ padding: '12px 16px' }}>{h.phone ? <a href={`tel:${h.phone}`} style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: 600 }}>{h.phone}</a> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <a href={`https://www.google.com/maps?q=${h.lat},${h.lng}`} target="_blank" rel="noopener noreferrer" style={{ color: '#22c55e', textDecoration: 'none', fontWeight: 600, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Navigation size={12} /> View
+                              </a>
+                            </td>
+                          </tr>
+                        ))}
+                      {nepalHospitals.length === 0 && !hospitalsLoading && (
+                        <tr><td colSpan={5} style={{ padding: '60px', textAlign: 'center', color: 'var(--muted)' }}>
+                          <Building2 size={40} style={{ marginBottom: 12, opacity: 0.4 }} />
+                          <p>No hospitals loaded yet. Click Refresh to fetch data.</p>
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ) : activeTab === 'reports' ? (
             <div style={{ height: '100%', overflowY: 'auto', padding: 32 }}>

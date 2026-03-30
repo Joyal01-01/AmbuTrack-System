@@ -168,14 +168,14 @@ router.get('/active-trip', (req, res) => {
     db.query(
       `SELECT rr.*, u.name AS patient_name, u.phone AS patient_phone FROM ride_requests rr LEFT JOIN users u ON u.id=rr.user_id
        WHERE rr.accepted_by=? AND rr.status IN ('accepted', 'arrived', 'started') LIMIT 1`,
-      [userId],
+      [user.id],
       (e2, r2) => {
         if (e2) { console.error("Active trip ride_requests query error:", e2); return res.status(500).json({ error: e2.message || e2 }); }
         if (r2 && r2.length) return res.json({ type: 'ride_request', ...r2[0] });
         
         db.query(
           `SELECT t.*, u.name AS patient_name, u.phone AS patient_phone FROM trips t LEFT JOIN users u ON u.id=t.patient_id
-           WHERE t.driver_id=? AND t.status IN ('requesting','accepted','arrived','started') LIMIT 1`,
+           WHERE t.driver_id=? AND t.status IN ('accepted','arrived','started') LIMIT 1`,
           [driverId],
           (err, rows) => {
             if (!err && rows && rows.length) return res.json({ type: 'trip', ...rows[0] });

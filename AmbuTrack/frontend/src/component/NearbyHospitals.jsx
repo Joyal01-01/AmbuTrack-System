@@ -1,6 +1,6 @@
 // src/component/NearbyHospitals.jsx
 import { useState, useEffect } from "react";
-import { Building2, MapPin, Navigation, ChevronDown, ChevronUp, RefreshCw, Loader } from "lucide-react";
+import { Building2, MapPin, Navigation, ChevronDown, ChevronUp, RefreshCw, Loader, CheckCircle } from "lucide-react";
 import api from "../api";
 import "./NearbyHospitals.css";
 
@@ -16,7 +16,7 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export default function NearbyHospitals({ lat, lng, radiusKm = 50, onViewOnMap, compact = false }) {
+export default function NearbyHospitals({ lat, lng, radiusKm = 50, onViewOnMap, onSelect, compact = false }) {
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -109,11 +109,34 @@ export default function NearbyHospitals({ lat, lng, radiusKm = 50, onViewOnMap, 
                       </div>
                     </div>
                   </div>
-                  {onViewOnMap && (
-                    <button className="nh-view-btn" onClick={() => onViewOnMap(h.lat, h.lng, h.name)}>
-                      <Navigation size={12} /> View
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {onViewOnMap && (
+                      <button className="nh-view-btn" onClick={() => onViewOnMap(h.lat, h.lng, h.name)}>
+                        <Navigation size={12} /> View
+                      </button>
+                    )}
+                    {onSelect && (
+                      <button 
+                        className="nh-select-btn" 
+                        onClick={() => onSelect(h)}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#4f46e5',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 6,
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                      >
+                        <CheckCircle size={12} /> Select
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

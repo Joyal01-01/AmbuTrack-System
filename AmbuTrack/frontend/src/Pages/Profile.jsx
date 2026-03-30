@@ -25,7 +25,7 @@ function Toast({ message, type, onDone }) {
 
 export default function Profile() {
   const { t } = useTranslation();
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem("user")));
+  const [user] = useState(() => { try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null } });
   const [twofa, setTwofa] = useState(false);
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
@@ -58,7 +58,7 @@ export default function Profile() {
       const res = await api.post("/api/user/2fa", { enable: !twofa });
       setTwofa(res.data.twofa);
       addToast(`2-Step Authentication has been ${res.data.twofa ? "Enabled" : "Disabled"}.`, "success");
-    } catch (err) {
+    } catch {
       addToast("Failed to toggle 2FA", "error");
     } finally {
       setLoading(false);

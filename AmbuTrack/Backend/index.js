@@ -239,7 +239,14 @@ const initDB = async () => {
             "ALTER TABLE users ADD COLUMN ocr_flags TEXT NULL",
             "ALTER TABLE ride_requests ADD COLUMN medical_note TEXT NULL",
             "ALTER TABLE users ADD COLUMN medical_history TEXT NULL",
-            "ALTER TABLE ride_requests ADD COLUMN otp VARCHAR(10) NULL"
+            "ALTER TABLE ride_requests ADD COLUMN otp VARCHAR(10) NULL",
+            // CRITICAL FIXES FOR EXISTING ERRORS
+            "ALTER TABLE notifications ADD COLUMN user_id INT NOT NULL",
+            "ALTER TABLE trips ADD COLUMN patient_lat DOUBLE",
+            "ALTER TABLE trips ADD COLUMN patient_lng DOUBLE",
+            // NEW FEATURE SUPPORT
+            "ALTER TABLE ride_requests ADD COLUMN destination_lat DOUBLE NULL",
+            "ALTER TABLE ride_requests ADD COLUMN destination_lng DOUBLE NULL"
         ];
 
         for (const stmt of alters) {
@@ -711,7 +718,7 @@ app.get('/api/patient/drivers', (req, res) => {
 // create ride request via REST (authenticated by token)
 app.post('/api/ride-request', (req,res)=>{
 	const token = req.headers['x-auth-token'] || req.body.token;
-	const { lat, lng, driver_user_id } = req.body;
+	const { lat, lng, destination_lat, destination_lng, driver_user_id } = req.body;
 	if(!token) return res.status(401).send('Unauthorized');
 	db.query('SELECT * FROM users WHERE token=?',[token], (err, r)=>{
 		if(err) return res.status(500).send(err);
@@ -722,12 +729,14 @@ app.post('/api/ride-request', (req,res)=>{
 		
 		const otp = Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit OTP
 		
-		const insertSql = driver_user_id 
-		  ? 'INSERT INTO ride_requests(user_id,lat,lng,name,requested_driver_id,otp) VALUES(?,?,?,?,?,?)'
-		  : 'INSERT INTO ride_requests(user_id,lat,lng,name,otp) VALUES(?,?,?,?,?)';
-		const insertParams = driver_user_id 
-		  ? [user.id, lat, lng, user.name || 'Patient', driver_user_id, otp]
-		  : [user.id, lat, lng, user.name || 'Patient', otp];
+		let insertSql, insertParams;
+		if (driver_user_id) {
+			insertSql = 'INSERT INTO ride_requests(user_id,lat,lng,destination_lat,destination_lng,name,requested_driver_id,otp) VALUES(?,?,?,?,?,?,?,?)';
+			insertParams = [user.id, lat, lng, destination_lat || null, destination_lng || null, user.name || 'Patient', driver_user_id, otp];
+		} else {
+			insertSql = 'INSERT INTO ride_requests(user_id,lat,lng,destination_lat,destination_lng,name,otp) VALUES(?,?,?,?,?,?,?)';
+			insertParams = [user.id, lat, lng, destination_lat || null, destination_lng || null, user.name || 'Patient', otp];
+		}
 
 		db.query(insertSql, insertParams, (e, resu)=>{
 			if(e) return res.status(500).send(e);
@@ -738,7 +747,13 @@ app.post('/api/ride-request', (req,res)=>{
 				if(registry[sid] && registry[sid].role === 'driver'){
 					// If specifically requested, only notify that driver. Otherwise, notify all.
 					if(!driver_user_id || registry[sid].userId === driver_user_id) {
-						io.to(sid).emit('ride_request', { id, userId:user.id, name: user.name || 'Patient', lat, lng, targeted: !!driver_user_id });
+						io.to(sid).emit('ride_request', { 
+							id, userId:user.id, name: user.name || 'Patient', 
+							lat, lng, 
+							destination_lat: destination_lat || null, 
+							destination_lng: destination_lng || null,
+							targeted: !!driver_user_id 
+						});
 					}
 				} 
 			});
@@ -1113,7 +1128,6 @@ app.post('/api/ride-request/:id/accept', (req,res)=>{
 
 									// Fetch patient details (name, phone)
 									conn.query('SELECT name, phone FROM users WHERE id=?', [userId], (pErr, pRes)=>{
-										conn.release(); // release connection after final query
 										const patientName = pRes && pRes[0] ? pRes[0].name : 'Patient';
 										const patientPhone = pRes && pRes[0] ? pRes[0].phone : null;
 
@@ -1122,36 +1136,40 @@ app.post('/api/ride-request/:id/accept', (req,res)=>{
 										// Find driver socket(s)
 										const driverSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === driver.id);
 
-										patientSids.forEach(sid => {
-											io.to(sid).emit('ride_accepted', { 
-												driverId: driver.id, 
-												driverName: driver.name,
-												driverPhone: driver.phone
+										// Fetch destination coordinates from the request just accepted
+										conn.query('SELECT destination_lat, destination_lng FROM ride_requests WHERE id=?', [id], (drErr, drRes) => {
+											const destLat = drRes && drRes[0] ? drRes[0].destination_lat : null;
+											const destLng = drRes && drRes[0] ? drRes[0].destination_lng : null;
+
+											patientSids.forEach(sid => {
+												io.to(sid).emit('ride_accepted', { 
+													driverId: driver.id, 
+													driverName: driver.name,
+													driverPhone: driver.phone
+												});
 											});
-										});
-										
-										// Send SMS to patient about ride acceptance
-										if (patientPhone) {
-											sendSMS(patientPhone, `AmbuTrack: Your ambulance has been dispatched. Driver ${driver.name || ''} is on the way.`);
-										}
+											
+											// Send SMS to patient about ride acceptance
+											if (patientPhone) {
+												sendSMS(patientPhone, `AmbuTrack: Your ambulance has been dispatched. Driver ${driver.name || ''} is on the way.`);
+											}
 
-										driverSids.forEach(sid => {
-											io.to(sid).emit('ride_confirmed', { 
-												id: id,
-												patientSocketId: patientSids[0] || null,
-												patientId: userId,
-												patientName: patientName,
-												patientPhone: patientPhone
+											driverSids.forEach(sid => {
+												io.to(sid).emit('ride_confirmed', { 
+													id: id,
+													patientSocketId: patientSids[0] || null,
+													patientId: userId,
+													patientName: patientName,
+													patientPhone: patientPhone,
+													destination_lat: destLat,
+													destination_lng: destLng
+												});
 											});
+											conn.release(); // release connection after final query
+											res.send({ ok:true });
+											// Trigger Notification for Patient
+											triggerNotification(userId, 'TRIP_ACCEPTED', `Your ambulance request has been accepted by ${driver.name}.`);
 										});
-
-										// Notify all drivers that this request is no longer available
-										// so they can remove it from their pending lists immediately.
-										io.emit('ride_cancelled', { id });
-
-										res.send({ ok:true });
-										// Trigger Notification for Patient
-										triggerNotification(userId, 'TRIP_ACCEPTED', `Your ambulance request has been accepted by ${driver.name}.`);
 									});
 								});
 							});
@@ -1199,6 +1217,48 @@ app.post('/api/ride-request/:id/start-with-otp', (req, res) => {
 
 				res.send({ ok: true });
 			});
+		});
+	});
+});
+
+// Set trip destination (called by driver after starting trip)
+app.post('/api/ride-request/:id/destination', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	const id = req.params.id;
+	const { lat, lng } = req.body;
+	
+	if(!token) return res.status(401).send('Unauthorized');
+	if(!lat || !lng) return res.status(400).send('Missing coordinates');
+
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, r) => {
+		if(err || !r.length) return res.status(401).send('Unauthorized');
+		const driver = r[0];
+		if(driver.role !== 'driver') return res.status(403).send('Forbidden');
+
+		// Update destination in ride_requests with numeric casting
+		const dLat = parseFloat(lat);
+		const dLng = parseFloat(lng);
+		
+		db.query('UPDATE ride_requests SET destination_lat=?, destination_lng=? WHERE id=? AND accepted_by=?', [dLat, dLng, id, driver.id], (uEr, result) => {
+			if(uEr) return res.status(500).send(uEr);
+			if(result.affectedRows === 0) return res.status(404).send('Ride request not found or not assigned to you');
+
+			// Update Trips table too
+			db.query("UPDATE trips SET destination_lat=?, destination_lng=? WHERE status='started' AND driver_id=(SELECT id FROM drivers WHERE user_id=?)", [dLat, dLng, driver.id]);
+
+			// Notify patient via socket
+			db.query('SELECT user_id FROM ride_requests WHERE id=?', [id], (e2, rr) => {
+				if(!e2 && rr.length){
+					const userId = rr[0].user_id;
+					const registry = io.registry || {};
+					const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
+					patientSids.forEach(sid => {
+						io.to(sid).emit('ride_destination_updated', { id, lat, lng });
+					});
+				}
+			});
+
+			res.send({ ok: true });
 		});
 	});
 });
@@ -1358,6 +1418,52 @@ app.get('/api/nearby-hospitals', async (req, res) => {
 	} catch (e) {
 		console.error('Nearby hospitals error:', e.message);
 		// Return empty array on error so UI doesn't break
+		res.json([]);
+	}
+});
+
+// ── All Nepal Hospitals (Admin use) ─────────────────────────────
+const nepalHospitalCache = { ts: 0, data: [] };
+const NEPAL_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+app.get('/api/nepal-hospitals', async (req, res) => {
+	try {
+		if (nepalHospitalCache.data.length && Date.now() - nepalHospitalCache.ts < NEPAL_CACHE_TTL) {
+			return res.json(nepalHospitalCache.data);
+		}
+
+		const query = `
+			[out:json][timeout:60];
+			area["ISO3166-1"="NP"]->.nepal;
+			(
+				node["amenity"~"hospital|clinic"](area.nepal);
+				way["amenity"~"hospital|clinic"](area.nepal);
+			);
+			out center 500;
+		`;
+		const response = await axios.post('https://overpass-api.de/api/interpreter',
+			`data=${encodeURIComponent(query)}`,
+			{ headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 65000 }
+		);
+		const elements = response.data?.elements || [];
+		const results = elements.map(el => ({
+			name: el.tags?.name || el.tags?.['name:en'] || 'Unnamed Facility',
+			lat: el.lat || el.center?.lat,
+			lng: el.lon || el.center?.lon,
+			type: el.tags?.amenity || 'hospital',
+			phone: el.tags?.phone || el.tags?.['contact:phone'] || null,
+			address: el.tags?.['addr:full'] || el.tags?.['addr:street'] || el.tags?.['addr:city'] || null,
+			district: el.tags?.['addr:district'] || el.tags?.['is_in:district'] || null,
+			province: el.tags?.['addr:province'] || null,
+			website: el.tags?.website || null,
+			opening_hours: el.tags?.opening_hours || null,
+		})).filter(h => h.lat && h.lng);
+
+		nepalHospitalCache.ts = Date.now();
+		nepalHospitalCache.data = results;
+		res.json(results);
+	} catch (e) {
+		console.error('Nepal hospitals error:', e.message);
 		res.json([]);
 	}
 });

@@ -140,6 +140,7 @@ export default function PatientDashboard() {
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [isSOSLoading, setIsSOSLoading] = useState(false);
   const [showSOSModal, setShowSOSModal] = useState(false);
+  const [selectedHospital, setSelectedHospital] = useState(null); // New state for destination
   
   // Real-time Interaction
   const [rideOtp, setRideOtp] = useState(null);
@@ -370,7 +371,10 @@ export default function PatientDashboard() {
       const payload = {
         lat: myLocation.lat,
         lng: myLocation.lng,
-        driver_user_id: selectedDriver ? selectedDriver.driver_user_id : null
+        driver_user_id: selectedDriver ? selectedDriver.driver_user_id : null,
+        destination_lat: selectedHospital ? selectedHospital.lat : null,
+        destination_lng: selectedHospital ? selectedHospital.lng : null,
+        hospital_name: selectedHospital ? selectedHospital.name : null
       };
       
       const res = await api.post('/api/ride-request', payload, { headers: { 'x-auth-token': user.token } });
@@ -827,7 +831,16 @@ export default function PatientDashboard() {
           )}
 
           {requestStatus === 'idle' && <NearbyAmbulances ambulances={activeAmbulances} myLocation={myLocation} onSelect={(d) => setSelectedDriver(d)} selectedId={selectedDriver?.driver_user_id} calculateDistance={calculateDistance} />}
-          {myLocation && <NearbyHospitals lat={myLocation.lat} lng={myLocation.lng} radiusKm={50} onViewOnMap={handleViewHospitalOnMap} compact={requestStatus !== 'idle'} />}
+          {requestStatus === 'idle' && selectedHospital && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: 16, borderRadius: 12, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#166534', fontWeight: 600, textTransform: 'uppercase' }}>Destination Selected</div>
+                <div style={{ color: '#14532d', fontWeight: 700 }}>{selectedHospital.name}</div>
+              </div>
+              <button onClick={() => setSelectedHospital(null)} style={{ background: 'none', border: 'none', color: '#ef4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Change</button>
+            </div>
+          )}
+          {myLocation && <NearbyHospitals lat={myLocation.lat} lng={myLocation.lng} radiusKm={50} onViewOnMap={handleViewHospitalOnMap} onSelect={setSelectedHospital} compact={requestStatus !== 'idle'} />}
         </div>
       </div>
       <div style={{ background: '#e2e8f0', position: 'relative' }}>
@@ -854,6 +867,14 @@ export default function PatientDashboard() {
               )}
 
               {selectedDriver && requestStatus === 'idle' && <Polyline positions={[[myLocation.lat, myLocation.lng], [selectedDriver.lat, selectedDriver.lng]]} color="#4f46e5" weight={4} dashArray="5,10" />}
+              {selectedHospital && (
+                <>
+                  <Marker position={[selectedHospital.lat, selectedHospital.lng]} icon={hospitalIcon}>
+                    <Popup><strong>Destination: {selectedHospital.name}</strong></Popup>
+                  </Marker>
+                  {requestStatus === 'idle' && <Polyline positions={[[myLocation.lat, myLocation.lng], [selectedHospital.lat, selectedHospital.lng]]} color="#ef4444" weight={4} dashArray="10,10" />}
+                </>
+              )}
               {nearbyHospitals.map((h, i) => (<Marker key={`hosp-${i}`} position={[h.lat, h.lng]} icon={hospitalIcon}><Popup><strong>{h.name}</strong><br />{h.type === 'hospital' ? '🏥 Hospital' : '🏨 Clinic'}{h.phone && <><br />📞 {h.phone}</>}</Popup></Marker>))}
             </MapContainer>
             <button onClick={handleLocateMe} style={{ position: 'absolute', top: 16, right: 16, zIndex: 1000, width: 40, height: 40, borderRadius: 10, background: '#fff', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: '#4f46e5' }} title="Locate me"><LocateFixed size={18} /></button>
@@ -1063,7 +1084,7 @@ export default function PatientDashboard() {
                 ⚠️ Use ONLY for real emergencies. Your exact GPS location will be shared with all emergency responders immediately.
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
-                <button onClick={() => setShowSOSModal(false)} style={{ flex: 1, padding: '14px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem' }}>{t('btn_cancel')}</button>
+                <button onClick={() => setShowSOSModal(false)} style={{ flex: 1, padding: '14px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem' }}>Back</button>
                 <button onClick={confirmSOS} disabled={isSOSLoading} style={{ flex: 2, padding: '14px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 800, cursor: 'pointer', fontSize: '1rem', boxShadow: '0 4px 12px rgba(239,68,68,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   {isSOSLoading ? 'Sending Alert...' : `🚨 ${t('btn_accept')}`}
                 </button>
@@ -1132,7 +1153,7 @@ function PatientHistoryView({ user }) {
       <p style={{ margin: '0 0 24px', color: 'var(--muted)' }}>{t('settings_subtitle')}</p>
 
       {loading && <p style={{ color: 'var(--muted)' }}>Loading…</p>}
-      {error && <p style={{ color: '#ef4444' }}>{error}</p>}
+      {error && <p style={{ color: '#ef4444' }}>{typeof error === 'object' ? (error.message || JSON.stringify(error)) : String(error)}</p>}
 
       {!loading && !error && trips.length === 0 && (
         <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>

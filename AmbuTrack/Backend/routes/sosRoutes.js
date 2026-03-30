@@ -2,7 +2,7 @@ import express from 'express';
 const router = express.Router();
 import db from '../config/db.js';
 
-router.post('/sos', async (req, res) => {
+router.post('/', async (req, res) => {
   const token = req.headers['x-auth-token'];
   const { lat, lng, message } = req.body;
 
