@@ -5,16 +5,18 @@ import App from './App'
 import DriverDashboard from './Pages/DriverDashboard.jsx'
 import PatientDashboard from './Pages/PatientDashboard.jsx'
 import AdminDashboard from './Pages/AdminDashboard.jsx'
-import AdminPortal from './Pages/AdminPortal.jsx'
 import Login from './Auth/Login.jsx'
 import Register from './Auth/Register.jsx'
 import ForgotPassword from './Auth/ForgotPassword.jsx'
 import Setting from './Pages/Setting.jsx'
 import Profile from './Pages/Profile.jsx'
 import Support from './Pages/Support.jsx'
+import Legal from './Pages/Legal.jsx'
 import Layout from './Layout'
+import { ThemeProvider } from './component/ThemeContext'
 import 'leaflet/dist/leaflet.css'
 import './Style.css'
+import './i18n'
 
 function RequireAuth({ children, role }){
   try {
@@ -51,9 +53,8 @@ const router = createBrowserRouter(
         { index: true, element: <DashboardWrapper /> },
         { path: 'dashboard', element: <DashboardWrapper /> },
         { path: 'admin-dashboard', element: <RequireAuth role="admin"><AdminDashboard /></RequireAuth> },
-        { path: 'admin-portal', element: <RequireAuth role="admin"><AdminPortal /></RequireAuth> },
         { path: 'manage-users', element: <RequireAuth role="admin"><AdminDashboard /></RequireAuth> },
-        { path: 'manage-drivers', element: <RequireAuth role="admin"><AdminPortal /></RequireAuth> },
+        { path: 'manage-drivers', element: <RequireAuth role="admin"><AdminDashboard /></RequireAuth> },
         { path: 'reports', element: <RequireAuth role="admin"><AdminDashboard /></RequireAuth> },
         { path: 'driver-dashboard', element: <RequireAuth role="driver"><DriverDashboard /></RequireAuth> },
         { path: 'requests', element: <RequireAuth role="driver"><DriverDashboard /></RequireAuth> },
@@ -67,6 +68,9 @@ const router = createBrowserRouter(
         { path: 'settings', element: <RequireAuth><Setting /></RequireAuth> },
         { path: 'profile', element: <RequireAuth><Profile /></RequireAuth> },
         { path: 'support', element: <Support /> },
+        { path: 'about', element: <Legal title="About Us" /> },
+        { path: 'privacy', element: <Legal title="Privacy Policy" /> },
+        { path: 'terms', element: <Legal title="Terms of Service" /> },
         { path: '*', element: <Navigate to="/dashboard" replace /> },
       ]
     },
@@ -81,6 +85,8 @@ const router = createBrowserRouter(
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <ThemeProvider>
+      <RouterProvider router={router} />
+    </ThemeProvider>
   </React.StrictMode>
 )

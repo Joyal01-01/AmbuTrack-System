@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { useTranslation } from 'react-i18next';
 import { useLocation } from "react-router-dom";
 import { socket } from "../socket";
 import api from "../api";
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Ambulance, MapPin, Navigation, Clock, CreditCard, CheckCircle, ShieldAlert, Phone, LocateFixed, Building2 } from 'lucide-react';
+import { Ambulance, MapPin, Navigation, Clock, CreditCard, CheckCircle, ShieldAlert, Phone, LocateFixed, Building2, Share2 } from 'lucide-react';
 import '../Pages/DriverDashboard.css';
 import Chatbot from '../component/Chatbot';
 import NearbyHospitals from '../component/NearbyHospitals';
 import NearbyAmbulances from '../component/NearbyAmbulances';
+import 'leaflet-routing-machine';
 
 // Fix typical Leaflet icon issues
 delete L.Icon.Default.prototype._getIconUrl;
@@ -66,7 +68,43 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-function PatientDashboard() {
+// Custom Route Component
+function RoutingControl({ start, end }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!start || !end || !start.lat || !end.lat) return;
+
+    try {
+      const routingControl = L.Routing.control({
+        waypoints: [
+          L.latLng(start.lat, start.lng),
+          L.latLng(end.lat, end.lng)
+        ],
+        routeWhileDragging: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        showAlternatives: false,
+        show: false,
+        createMarker: () => null,
+        lineOptions: {
+          styles: [{ color: "#ef4444", weight: 6 }]
+        }
+      }).addTo(map);
+
+      return () => {
+        try { map.removeControl(routingControl); } catch (e) { console.error('Error removing routing control', e); }
+      };
+    } catch (e) {
+      console.error('Error initializing routing control', e);
+    }
+  }, [map, start, end]);
+
+  return null;
+}
+
+export default function PatientDashboard() {
+  const { t } = useTranslation();
   const location = useLocation();
   const [user, setUser] = useState(null);
   const [myLocation, setMyLocation] = useState(() => {
@@ -88,6 +126,7 @@ function PatientDashboard() {
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [activeTrip, setActiveTrip] = useState(null);
   const [requestStatus, setRequestStatus] = useState("idle"); // idle, searching, accepted, arrived, started, completed, paying
+  
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [rating, setRating] = useState(5);
@@ -96,11 +135,22 @@ function PatientDashboard() {
   const [requestId, setRequestId] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [showTimeoutModal, setShowTimeoutModal] = useState(false);
+  const [medicalNote, setMedicalNote] = useState("");
+  const [showMedicalModal, setShowMedicalModal] = useState(false);
+  const [isSubmittingNote, setIsSubmittingNote] = useState(false);
+  const [isSOSLoading, setIsSOSLoading] = useState(false);
+  const [showSOSModal, setShowSOSModal] = useState(false);
+  
+  // Real-time Interaction
+  const [rideOtp, setRideOtp] = useState(null);
+  const [driverContact, setDriverContact] = useState(null);
 
   const showToast = (msg) => {
     setNotification(msg);
     setTimeout(() => setNotification(""), 4000);
   };
+
+  
 
   useEffect(() => {
     const raw = localStorage.getItem('user');
@@ -115,8 +165,8 @@ function PatientDashboard() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => updateLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => {
-          showToast("Please enable Location Services to book an ambulance");
+        () => {
+          console.log('Location access not granted yet.');
           // Fallback to Kathmandu for demo
           updateLocation({ lat: 27.7172, lng: 85.3240 });
         },
@@ -132,13 +182,23 @@ function PatientDashboard() {
     // Socket Listeners
     socket.on('ride_accepted', (data) => {
       setRequestStatus("accepted");
-      showToast(`${data.driverName || 'A driver'} accepted your request!`);
+      if (data.driver) setSelectedDriver(data.driver);
+      if (data.driverPhone) setDriverContact(data.driverPhone);
+      showToast(`${data.driverName || data.driver?.name || 'A driver'} accepted your request!`);
     });
 
-    socket.on('trip_updated', (data) => {
-      if(data.status === 'arrived') setRequestStatus('arrived');
-      if(data.status === 'started') setRequestStatus('started');
-    });
+   socket.on('trip_updated', (data) => {
+  console.log("Trip update received:", data);
+
+  // ✅ Always sync full status (fixes mismatch issue)
+  if (data.status) {
+    setRequestStatus(data.status);
+  }
+  // Restore OTP if backend sends it with the status update
+  if (data.otp) {
+    setRideOtp(data.otp);
+  }
+});
 
     socket.on('trip_completed', (data) => {
       setRequestStatus('completed');
@@ -151,6 +211,12 @@ function PatientDashboard() {
     socket.on('driver_location_update', (data) => {
       // Update specific driver location on map if trailing them
       setActiveAmbulances(prev => prev.map(d => d.driver_user_id === data.userId ? { ...d, lat: data.lat, lng: data.lng } : d));
+      setSelectedDriver(prev => {
+        if (prev && prev.driver_user_id === data.userId) {
+          return { ...prev, lat: data.lat, lng: data.lng };
+        }
+        return prev;
+      });
     });
 
     socket.on('driver_offline', (data) => {
@@ -174,9 +240,11 @@ function PatientDashboard() {
           const trip = res.data;
           setRequestId(trip.id);
           setRequestStatus(trip.status);
+          if (trip.status === 'accepted') {
+          // accepted state restored; UI will reflect 'accepted' status
+          }
           if (trip.status === 'completed') {
             // Need to ensure fare and distance are set for the modal
-            // These might need to be calculated or fetched from a 'trips' table if moving beyond ride_requests
             setActiveTrip({
               id: trip.id,
               fare: trip.fare || 100 + ( (trip.distance_km || 0) * 30 ), // fallback calculation
@@ -184,6 +252,8 @@ function PatientDashboard() {
             });
             setShowPaymentModal(true);
           } else if (['accepted', 'arrived', 'started'].includes(trip.status)) {
+            // Restore OTP so it stays visible even after page reload or arrived event
+            if (trip.otp) setRideOtp(trip.otp);
             // If we have an active driver, we might want to fetch their info too
             if (trip.accepted_by || trip.requested_driver_id) {
                // Optional: fetch driver details if needed for UI persistence
@@ -204,6 +274,7 @@ function PatientDashboard() {
       socket.off('driver_offline');
       clearInterval(pollId);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Request Timeout Timer
@@ -217,6 +288,7 @@ function PatientDashboard() {
       handleRequestTimeout();
     }
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestStatus, timeLeft]);
 
   const handleRequestTimeout = async () => {
@@ -263,6 +335,7 @@ function PatientDashboard() {
 
   useEffect(() => {
     if (myLocation) fetchHospitals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myLocation]);
 
   const handleLocateMe = () => {
@@ -302,7 +375,9 @@ function PatientDashboard() {
       
       const res = await api.post('/api/ride-request', payload, { headers: { 'x-auth-token': user.token } });
       setRequestId(res.data.id);
+      if (res.data.otp) setRideOtp(res.data.otp);
       setTimeLeft(60); // 1 minute timeout
+      setShowMedicalModal(true); // Open medical details modal after booking
       if (selectedDriver) {
         showToast(`Request sent securely to ${selectedDriver.name}`);
       } else {
@@ -314,16 +389,61 @@ function PatientDashboard() {
     }
   };
 
+  const handleSOS = () => {
+    if (!myLocation) return showToast('Waiting for location...');
+    setShowSOSModal(true);
+  };
+
+  const confirmSOS = async () => {
+    setShowSOSModal(false);
+    setIsSOSLoading(true);
+    try {
+      await api.post('/api/sos', { lat: myLocation.lat, lng: myLocation.lng, message: 'CRITICAL EMERGENCY' }, { headers: { 'x-auth-token': user.token } });
+      showToast('🆘 EMERGENCY ALERT SENT. Help is on the way.');
+      if (requestStatus === 'idle') handleRequestAmbulance();
+    } catch (e) {
+      showToast('Failed to send SOS: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setIsSOSLoading(false);
+    }
+  };
+
   const handleCancelRequest = async () => {
-    if (!requestId) return setRequestStatus("idle");
+    if (!requestId) return;
     try {
       await api.post(`/api/ride-request/${requestId}/cancel`);
       setRequestStatus("idle");
       setRequestId(null);
+      setRideOtp(null);
+      setDriverContact(null);
       setTimeLeft(0);
-      showToast("Request Cancelled");
+      showToast("Ride Cancelled");
     } catch (err) {
-      showToast("Failed to cancel: " + (err.response?.data || err.message));
+      console.error('Cancel failed', err);
+      const status = err?.response?.status;
+      const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err.message;
+      if (status === 409) {
+        showToast(serverMsg || 'Unable to cancel ride (already in progress)');
+        if (err.response?.data?.status) setRequestStatus(err.response.data.status);
+        return;
+      }
+      showToast('Failed to cancel request: ' + (serverMsg || 'Unknown error'));
+    }
+  };
+
+  const handleShareTrip = async () => {
+    if (navigator.share && selectedDriver) {
+      try {
+        await navigator.share({
+          title: 'Track My AmbuTrack Ride',
+          text: `I'm currently being picked up by an AmbuTrack ambulance. Driver: ${(selectedDriver?.name || 'Assigned Driver')}, Contact: ${driverContact || 'N/A'}.`,
+          url: window.location.href
+        });
+      } catch (err) {
+        console.log("Share failed:", err);
+      }
+    } else {
+      showToast("Native sharing not supported on this device/browser");
     }
   };
 
@@ -394,103 +514,295 @@ function PatientDashboard() {
 
   // Determine which view to render based on route
   const pathname = location?.pathname || '';
-  let view = null;
+  let view;
 
-  // Home hero (no map) with Request button that navigates to /nearby
-  const HomeHero = (
-    <div className="home-hero">
-      <div className="home-hero-grid">
-        <div style={{ color: '#0f172a' }}>
-          <h1 style={{ fontSize: '2.4rem', margin: 0, lineHeight: 1.05 }}>
-            Fast, Reliable Ambulance On-Demand
-          </h1>
-          <p style={{ color: '#64748b', marginTop: 12, fontSize: '1rem' }}>
-            AmbuTrack connects you to nearby ambulances within minutes — track the vehicle, get ETA, and pay securely.
-          </p>
+  // --- WALLET VIEW ---
+  const [transactions, setTransactions] = useState([]);
+  const [isTopupLoading, setIsTopupLoading] = useState(false);
 
-          <div style={{ display: 'flex', gap: 12, marginTop: 22 }}>
-            <a href="/nearby" style={{ padding: '12px 20px', background: '#ef4444', color: '#fff', borderRadius: 12, fontWeight: 700, textDecoration: 'none' }}>Request Ambulance</a>
-            <a href="/nearby" style={{ padding: '12px 20px', border: '1px solid #e2e8f0', color: '#475569', borderRadius: 12, fontWeight: 700, textDecoration: 'none' }}>Book Now</a>
+  const fetchWalletHistory = async (u) => {
+    try {
+      const res = await api.get('/api/wallet/history', { headers: { 'x-auth-token': u.token } });
+      setTransactions(res.data);
+    } catch (e) { console.error("History Error:", e); }
+  };
+
+  useEffect(() => {
+    if (user && pathname.includes('/wallet')) {
+      fetchWalletHistory(user);
+    }
+  }, [user, pathname]);
+
+  const handleTopup = async (amt) => {
+    setIsTopupLoading(true);
+    try {
+      await api.post('/api/wallet/topup', { amount: amt, method: 'eSewa', description: 'Manual Top-up' }, { headers: { 'x-auth-token': user.token } });
+      showToast(`Successfully added NPR ${amt} to your wallet!`);
+      fetchWallet();
+      fetchWalletHistory(user);
+    } catch {
+      showToast("Top-up failed");
+    } finally {
+      setIsTopupLoading(false);
+    }
+  };
+
+  const WalletView = (
+    <div style={{ padding: '24px var(--container-padding)', maxWidth: 'var(--container-max)', margin: '0 auto', animation: 'fadeIn 0.5s ease-out' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '2rem', fontWeight: 800, color: 'var(--text)' }}>My Wallet</h1>
+          <p style={{ margin: '4px 0 0', color: 'var(--muted)' }}>Manage your funds and view payment history</p>
+        </div>
+        <button onClick={fetchWallet} style={{ padding: '10px 18px', background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
+          <Clock size={18} /> Refresh
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 32 }}>
+        {/* Balance Card Section */}
+        <div>
+          <div style={{ 
+            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)', 
+            borderRadius: 24, padding: 32, color: '#fff', position: 'relative', overflow: 'hidden',
+            boxShadow: '0 20px 40px -10px rgba(79, 70, 229, 0.4)', marginBottom: 24
+          }}>
+            {/* Decorative circles */}
+            <div style={{ position: 'absolute', top: -20, right: -20, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }} />
+            <div style={{ position: 'absolute', bottom: -40, left: -20, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
+            
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              <div style={{ fontSize: '0.9rem', opacity: 0.8, fontWeight: 500, marginBottom: 8, letterSpacing: '0.5px' }}>AVAILABLE BALANCE</div>
+              <div style={{ fontSize: '2.8rem', fontWeight: 800, marginBottom: 32 }}>NPR {Number(walletBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: 4 }}>CARD HOLDER</div>
+                  <div style={{ fontSize: '1rem', fontWeight: 600, textTransform: 'uppercase' }}>{user?.name || 'Valued Patient'}</div>
+                </div>
+                <div style={{ width: 48, height: 32, background: 'rgba(255,255,255,0.2)', borderRadius: 6 }} />
+              </div>
+            </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 28 }}>
-            <div style={{ background: '#fff', padding: 16, borderRadius: 12, border: '1px solid #f1f5f9' }}>
-              <h4 style={{ margin: 0 }}>24/7 Coverage</h4>
-              <p style={{ margin: '8px 0 0', color: '#64748b' }}>Always available ambulances nearby.</p>
+          <div style={{ background: 'var(--card-bg)', borderRadius: 20, padding: 24, border: '1px solid var(--border)' }}>
+            <h3 style={{ margin: '0 0 20px', fontSize: '1.1rem' }}>Top Up Wallet</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+              {[500, 1000, 2000, 5000].map(amt => (
+                <button 
+                  key={amt} 
+                  onClick={() => handleTopup(amt)}
+                  disabled={isTopupLoading}
+                  style={{ padding: '14px', background: 'var(--background)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
+                  onMouseOver={e => e.target.style.borderColor = '#4f46e5'}
+                  onMouseOut={e => e.target.style.borderColor = 'var(--border)'}
+                >+ NPR {amt}</button>
+              ))}
             </div>
-            <div style={{ background: '#fff', padding: 16, borderRadius: 12, border: '1px solid #f1f5f9' }}>
-              <h4 style={{ margin: 0 }}>Real-time Tracking</h4>
-              <p style={{ margin: '8px 0 0', color: '#64748b' }}>Follow the vehicle live until arrival.</p>
-            </div>
-            <div style={{ background: '#fff', padding: 16, borderRadius: 12, border: '1px solid #f1f5f9' }}>
-              <h4 style={{ margin: 0 }}>Secure Payments</h4>
-              <p style={{ margin: '8px 0 0', color: '#64748b' }}>Multiple payment options and receipts.</p>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 28, color: '#475569' }}>
-            <h3 style={{ margin: 0 }}>Why AmbuTrack?</h3>
-            <ul style={{ marginTop: 8, paddingLeft: 18, color: '#64748b' }}>
-              <li>Fast dispatch to the nearest ambulance</li>
-              <li>Verified drivers and equipped vehicles</li>
-              <li>Transparent fares and easy payments</li>
-            </ul>
+            <button 
+              disabled={isTopupLoading}
+              onClick={() => handleTopup(2500)} // Custom simulation
+              style={{ width: '100%', padding: '16px', background: '#60bb46', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
+            >
+              <img src="https://esewa.com.np/common/images/esewa_logo.png" alt="eSewa" style={{ height: 20 }} /> 
+              {isTopupLoading ? 'Processing...' : 'Add Funds with eSewa'}
+            </button>
           </div>
         </div>
 
-        <div className="home-hero-image-wrap">
-          <img className="hero-image" src="/assets/ambulance-hero.png" alt="Ambulance" onError={(e)=>{ e.target.style.display='none'; }} />
+        {/* Transaction History Section */}
+        <div style={{ background: 'var(--card-bg)', borderRadius: 24, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div className="dashboard-header" style={{ padding: '16px var(--container-padding)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, fontSize: '1.2rem' }}>{t('nav_wallet')}</h3>
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted)', background: 'var(--background)', padding: '4px 10px', borderRadius: 20 }}>{t('panel_history')}</span>
+          </div>
+          
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
+            {transactions.length > 0 ? transactions.map((tx, i) => (
+              <div key={tx.id} style={{ 
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 0', 
+                borderBottom: i === transactions.length - 1 ? 'none' : '1px solid var(--border)',
+                animation: `slideUp 0.3s ease-out ${i * 0.05}s both`
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ 
+                    width: 44, height: 44, borderRadius: 12, 
+                    background: tx.type === 'credit' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    color: tx.type === 'credit' ? '#22c55e' : '#ef4444',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    {tx.type === 'credit' ? <CheckCircle size={20} /> : <CreditCard size={20} />}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.95rem' }}>{tx.description}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{new Date(tx.created_at).toLocaleDateString()} • {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ 
+                    fontWeight: 700, fontSize: '1rem', 
+                    color: tx.type === 'credit' ? '#22c55e' : 'var(--text)' 
+                  }}>
+                    {tx.type === 'credit' ? '+' : '-'} NPR {Number(tx.amount).toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase' }}>{tx.type === 'credit' ? 'Received' : 'Spent'}</div>
+                </div>
+              </div>
+            )) : (
+              <div style={{ height: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
+                <CreditCard size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
+                <p>No transactions yet</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Home hero
+  const HomeHero = (
+    <div style={{ background: 'var(--background)', minHeight: 'calc(100vh - 70px)', display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 64, alignItems: 'center', width: '100%',
+        maxWidth: 'var(--container-max)', margin: '0 auto', padding: '60px var(--container-padding)'
+      }}>
+        {/* Left: Copy */}
+        <div style={{ color: 'var(--text)', animation: 'fadeInLeft 0.8s ease-out' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', padding: '8px 18px', borderRadius: 100, fontSize: '0.85rem', fontWeight: 700, marginBottom: 28, letterSpacing: '0.5px' }}>
+            <ShieldAlert size={16} /> {t('hero_tag')}
+          </div>
+          <h1 style={{ fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', margin: 0, lineHeight: 1.08, fontWeight: 900, letterSpacing: '-1.5px', color: 'var(--text)' }}>
+            {t('hero_title').split('Ambulance')[0]}<span style={{ color: '#ef4444' }}>Ambulance</span>{t('hero_title').split('Ambulance')[1]}
+          </h1>
+          <p style={{ color: 'var(--muted)', marginTop: 24, fontSize: '1.1rem', lineHeight: 1.7, maxWidth: 500 }}>
+            {t('hero_subtitle')}
+          </p>
+
+          <div style={{ display: 'flex', gap: 16, marginTop: 32, flexWrap: 'wrap' }}>
+            <a href="/nearby" style={{ padding: '16px 36px', background: '#ef4444', color: '#fff', borderRadius: 14, fontWeight: 700, textDecoration: 'none', fontSize: '1rem', boxShadow: '0 10px 30px -5px rgba(239,68,68,0.45)', transition: 'all 0.2s', display: 'inline-block' }}
+              onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+              onMouseOut={e => e.currentTarget.style.transform = 'none'}
+            >🚑 {t('btn_book_amb')}</a>
+            <button onClick={() => setShowSOSModal(true)} style={{ padding: '16px 36px', background: 'var(--card-bg)', border: '2px solid #ef4444', color: '#ef4444', borderRadius: 14, fontWeight: 700, fontSize: '1rem', cursor: 'pointer', transition: 'all 0.2s', display: 'inline-flex', alignItems: 'center', gap: 8 }}
+              onMouseOver={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = '#fff'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'var(--card-bg)'; e.currentTarget.style.color = '#ef4444'; }}
+            ><ShieldAlert size={18}/> Emergency SOS</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginTop: 40 }}>
+            {[
+              { label: t('feat_drivers'), sub: t('feat_verified'), icon: <CheckCircle size={20} /> },
+              { label: t('feat_realtime'), sub: t('feat_tracking'), icon: <Navigation size={20} /> },
+              { label: t('feat_cashless'), sub: t('feat_payments'), icon: <CreditCard size={20} /> }
+            ].map((f, i) => (
+              <div key={i} style={{ background: 'var(--card-bg)', padding: 18, borderRadius: 16, border: '1px solid var(--border)', transition: 'transform 0.2s' }}
+                onMouseOver={e => e.currentTarget.style.transform = 'translateY(-3px)'}
+                onMouseOut={e => e.currentTarget.style.transform = 'none'}
+              >
+                <div style={{ color: '#ef4444', marginBottom: 10 }}>{f.icon}</div>
+                <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text)', marginBottom: 4 }}>{f.label}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{f.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Ambulance Image */}
+        <div style={{ position: 'relative', height: 520, borderRadius: 32, overflow: 'hidden', animation: 'fadeInRight 0.8s ease-out', boxShadow: '0 40px 80px -20px rgba(239,68,68,0.2)' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(79,70,229,0.08) 100%)' }} />
+          <img
+            src="/ambulance-logo.png"
+            alt="Ambulance"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            onError={e => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1584515933487-779824d29309?w=800&q=80'; }}
+          />
+          {/* Floating badge */}
+          <div style={{ position: 'absolute', bottom: 32, left: 32, right: 32, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderRadius: 16, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 0 3px rgba(34,197,94,0.25)' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0f172a' }}>{activeAmbulances.length} {t('active_vehicles')}</span>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>{t('feat_realtime')}</span>
+          </div>
         </div>
       </div>
     </div>
   );
 
   const BookingView = (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(350px, 420px) 1fr', flex: 1, overflow: 'hidden' }}>
-      <div style={{ background: '#fff', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', overflowY: 'auto' }}>
-        <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9' }}>
-          <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#0f172a', fontWeight: 800 }}>Need an Ambulance?</h1>
-          <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.9rem' }}>Select an available ambulance from the map to view pricing and book immediately.</p>
+    <div className="booking-view" style={{ display: 'grid', gridTemplateColumns: 'minmax(350px, 400px) 1fr', height: 'calc(100vh - 220px)', overflow: 'hidden', background: 'var(--background)' }}>
+      <div style={{ background: 'var(--card-bg)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 220px)', overflowY: 'auto' }}>
+        <div style={{ padding: '24px', borderBottom: '1px solid var(--border)' }}>
+          <h1 style={{ margin: 0, fontSize: '1.5rem', color: 'var(--text)', fontWeight: 800 }}>Need an Ambulance?</h1>
+          <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: '0.9rem' }}>Select an available ambulance from the map to view pricing and book immediately.</p>
         </div>
         <div style={{ padding: 24, flex: 1 }}>
           {requestStatus !== 'idle' && (
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16, padding: 20, marginBottom: 24 }}>
+            <div style={{ background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 16, padding: 20, marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: requestStatus === 'searching' ? '#fef3c7' : requestStatus === 'completed' ? '#f0fdf4' : '#e0e7ff', color: requestStatus === 'searching' ? '#d97706' : requestStatus === 'completed' ? '#22c55e' : '#4f46e5' }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: requestStatus === 'searching' ? 'rgba(217, 119, 6, 0.1)' : requestStatus === 'completed' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(79, 70, 229, 0.1)', color: requestStatus === 'searching' ? '#d97706' : requestStatus === 'completed' ? '#22c55e' : '#4f46e5' }}>
                   {requestStatus === 'searching' ? <Navigation size={20} className="pulse" /> : requestStatus === 'completed' ? <CheckCircle size={20} /> : <Ambulance size={20} />}
                 </div>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>{requestStatus === 'searching' ? 'Finding Ambulance...' : requestStatus === 'accepted' ? 'Driver is on the way!' : requestStatus === 'arrived' ? 'Driver has arrived at your location' : requestStatus === 'started' ? 'Trip in progress' : 'Trip Completed'}</h3>
-                  <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '0.85rem' }}>{requestStatus === 'searching' ? 'Waiting for driver to accept' : requestStatus === 'accepted' ? 'Please be ready' : requestStatus === 'arrived' ? 'Please securely board the vehicle' : requestStatus === 'started' ? 'Heading safely to your destination' : 'Please complete your payment'}</p>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text)' }}>{requestStatus === 'searching' ? 'Finding Ambulance...' : requestStatus === 'accepted' ? 'Driver is on the way!' : requestStatus === 'arrived' ? 'Driver has arrived at your location' : requestStatus === 'started' ? 'Trip in progress' : 'Trip Completed'}</h3>
+                  <p style={{ margin: '2px 0 0', color: 'var(--muted)', fontSize: '0.85rem' }}>{requestStatus === 'searching' ? 'Waiting for driver to accept' : requestStatus === 'accepted' ? 'Please be ready' : requestStatus === 'arrived' ? 'Please securely board the vehicle' : requestStatus === 'started' ? 'Heading safely to your destination' : 'Please complete your payment'}</p>
                 </div>
               </div>
-              <div style={{ height: 6, background: '#e2e8f0', borderRadius: 6, overflow: 'hidden', marginTop: 12 }}>
+              
+              {/* Interaction Block for Contact & OTP */}
+              {(requestStatus === 'accepted' || requestStatus === 'arrived') && (
+                <div style={{ background: '#fff', padding: 16, borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  {driverContact && (
+                    <div style={{ textAlign: 'center', padding: '8px', background: '#f8fafc', borderRadius: 8 }}>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Driver Contact</div>
+                      <a href={`tel:${driverContact}`} style={{ color: '#0f172a', fontWeight: 800, fontSize: '1rem', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <Phone size={14} color="#4f46e5" /> {driverContact}
+                      </a>
+                    </div>
+                  )}
+                  {rideOtp && (
+                     <div style={{ textAlign: 'center', padding: '8px', background: '#f0fdfa', borderRadius: 8, border: '1px solid #ccfbf1' }}>
+                       <div style={{ fontSize: '0.75rem', color: '#115e59', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>Provide OTP to Driver</div>
+                       <div style={{ color: '#0f766e', fontWeight: 900, fontSize: '1.3rem', letterSpacing: '2px' }}>{rideOtp}</div>
+                     </div>
+                  )}
+                </div>
+              )}
+              
+              <div style={{ height: 6, background: 'var(--border)', borderRadius: 6, overflow: 'hidden', marginTop: 12 }}>
                 <div style={{ height: '100%', background: '#4f46e5', borderRadius: 6, transition: 'width 1s linear', width: `${(timeLeft / 60) * 100}%` }} />
               </div>
-              <div style={{ textAlign: 'right', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginTop: 4 }}>Expires in {timeLeft}s</div>
-              {requestStatus === 'searching' && <button onClick={handleCancelRequest} style={{ width: '100%', marginTop: 16, padding: 12, background: 'transparent', border: '1px solid #cbd5e1', color: '#64748b', borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}>Cancel Request</button>}
+              <div style={{ textAlign: 'right', fontSize: '0.75rem', fontWeight: 600, color: 'var(--muted)', marginTop: 4 }}>Expires in {timeLeft}s</div>
+              {requestStatus === 'searching' && <button onClick={handleCancelRequest} style={{ width: '100%', marginTop: 16, padding: 12, background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}>Cancel Request</button>}
+              
+              {(requestStatus === 'accepted' || requestStatus === 'arrived') && (
+                <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+                  <button onClick={handleCancelRequest} style={{ flex: 1, padding: 12, background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>Cancel Ride</button>
+                  <button onClick={handleShareTrip} style={{ flex: 1, padding: 12, background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Share2 size={16} /> Share Trip</button>
+                </div>
+              )}
             </div>
           )}
 
           {/* If no driver selected yet: show primary Request button */}
           {requestStatus === 'idle' && !selectedDriver && (
-            <div style={{ padding: 20, borderRadius: 12, background: '#fff', border: '1px solid #e6e6e6', marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>Ready to request an ambulance?</h3>
-              <p style={{ margin: '8px 0 12px', color: '#64748b' }}>Press Request Ambulance to broadcast to nearby vehicles.</p>
+            <div style={{ padding: 20, borderRadius: 12, background: 'var(--card-bg)', border: '1px solid var(--border)', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: 'var(--text)' }}>Ready to request an ambulance?</h3>
+              <p style={{ margin: '8px 0 12px', color: 'var(--muted)' }}>Press Request Ambulance to broadcast to nearby vehicles.</p>
               <button onClick={handleRequestAmbulance} style={{ padding: '12px 16px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}>Request Ambulance</button>
             </div>
           )}
 
           {requestStatus === 'idle' && selectedDriver && (
             <div style={{ animation: 'slideUp 0.3s ease-out' }}>
-              <div style={{ background: '#fff', border: '1px solid #c7d2fe', borderRadius: 16, padding: 20, boxShadow: '0 4px 20px rgba(79, 70, 229, 0.08)' }}>
+              <div style={{ background: 'var(--card-bg)', border: '1px solid var(--primary-soft)', borderRadius: 16, padding: 20, boxShadow: '0 4px 20px rgba(79, 70, 229, 0.08)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                      <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>{selectedDriver.name}</h3>
-                      <div style={{ background: '#fef2f2', color: '#ef4444', padding: '2px 8px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600 }}>⭐ {selectedDriver.rating || '5.0'}</div>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text)' }}>{selectedDriver.name}</h3>
+                      <div style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '2px 8px', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600 }}>⭐ {selectedDriver.rating || '5.0'}</div>
                     </div>
-                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 6 }}><Ambulance size={14} /> {selectedDriver.vehicle_name || 'Standard Ambulance'} ({selectedDriver.vehicle_type || 'A'})</p>
+                    <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 6 }}><Ambulance size={14} /> {selectedDriver.vehicle_name || 'Standard Ambulance'} ({selectedDriver.vehicle_type || 'A'})</p>
                   </div>
                 </div>
                 {myLocation && (
@@ -526,10 +838,49 @@ function PatientDashboard() {
               <ChangeView center={[myLocation.lat, myLocation.lng]} zoom={14} />
               <Marker position={[myLocation.lat, myLocation.lng]} icon={patientIcon}><Popup>You are here</Popup></Marker>
               {activeAmbulances.map(a => (<Marker key={a.driver_id || a.driver_user_id} position={[a.lat, a.lng]} icon={driverIcon} eventHandlers={{ click: () => { if (requestStatus === 'idle') setSelectedDriver(a); } }}><Popup><strong>{a.name}</strong><br />{a.vehicle_name || 'Ambulance'}<br />★ {a.rating || '5.0'}</Popup></Marker>))}
+              
+              {/* Routing Logic */}
+              {['accepted', 'arrived'].includes(requestStatus) && selectedDriver && (
+                <RoutingControl 
+                  start={{ lat: selectedDriver.lat, lng: selectedDriver.lng }} 
+                  end={myLocation} 
+                />
+              )}
+              {requestStatus === 'started' && nearbyHospitals.length > 0 && (
+                <RoutingControl 
+                  start={myLocation} 
+                  end={{ lat: nearbyHospitals[0].lat, lng: nearbyHospitals[0].lng }} 
+                />
+              )}
+
               {selectedDriver && requestStatus === 'idle' && <Polyline positions={[[myLocation.lat, myLocation.lng], [selectedDriver.lat, selectedDriver.lng]]} color="#4f46e5" weight={4} dashArray="5,10" />}
               {nearbyHospitals.map((h, i) => (<Marker key={`hosp-${i}`} position={[h.lat, h.lng]} icon={hospitalIcon}><Popup><strong>{h.name}</strong><br />{h.type === 'hospital' ? '🏥 Hospital' : '🏨 Clinic'}{h.phone && <><br />📞 {h.phone}</>}</Popup></Marker>))}
             </MapContainer>
             <button onClick={handleLocateMe} style={{ position: 'absolute', top: 16, right: 16, zIndex: 1000, width: 40, height: 40, borderRadius: 10, background: '#fff', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: '#4f46e5' }} title="Locate me"><LocateFixed size={18} /></button>
+            <button 
+              disabled={isSOSLoading}
+              onClick={handleSOS} 
+              style={{ 
+                position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, 
+                padding: '16px 32px', background: '#ef4444', color: '#fff', 
+                borderRadius: 50, fontWeight: 900, cursor: 'pointer', boxShadow: '0 10px 30px rgba(239, 68, 68, 0.4)',
+                display: 'flex', alignItems: 'center', gap: 12, fontSize: '1.2rem',
+                border: '4px solid rgba(255,255,255,0.2)', animation: 'pulseSOS 1.5s infinite'
+              }}
+            >
+              <ShieldAlert size={24} /> {isSOSLoading ? 'ALERTING...' : 'SOS EMERGENCY'}
+            </button>
+            <style>{`
+              @keyframes pulseSOS {
+                0% { transform: translateX(-50%) scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                70% { transform: translateX(-50%) scale(1.05); box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+                100% { transform: translateX(-50%) scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+              }
+              @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+              @keyframes fadeInLeft { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: translateX(0); } }
+              @keyframes fadeInRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+              @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+            `}</style>
           </>
         ) : (
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', flexDirection: 'column', gap: 12 }}><Navigation size={32} className="pulse" /><span>Locating you securely...</span></div>
@@ -541,13 +892,7 @@ function PatientDashboard() {
   if (pathname === '/' || pathname.includes('/dashboard')) {
     view = HomeHero;
   } else if (pathname.includes('/wallet')) {
-    view = (
-      <div style={{ padding: 24 }}>
-        <h2>Wallet</h2>
-        <p>Balance: NPR {Number(walletBalance || 0).toFixed(2)}</p>
-        <button onClick={fetchWallet} style={{ padding: 8, background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8 }}>Refresh Wallet</button>
-      </div>
-    );
+    view = WalletView;
   } else if (pathname.includes('/history')) {
     view = <PatientHistoryView user={user} />;
   } else {
@@ -556,13 +901,66 @@ function PatientDashboard() {
   }
 
   return (
-    <div className="patient-dashboard" style={{ minHeight: '100vh', background: '#f8fafc', display: 'flex', flexDirection: 'column', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ background: 'var(--background)', color: 'var(--text)', minHeight: 'calc(100vh - 70px)', fontFamily: 'Inter, sans-serif' }}>
       {view}
+
+      {/* Medical Note Modal */}
+      {showMedicalModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--card-bg)', width: '100%', maxWidth: 450, borderRadius: 20, padding: 32, boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', animation: 'slideUp 0.3s ease-out' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ShieldAlert size={24} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text)', fontWeight: 800 }}>Medical Details</h2>
+                <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.85rem' }}>Help the driver prepare for the emergency.</p>
+              </div>
+            </div>
+            
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Describe the condition / Special instructions</label>
+              <textarea 
+                value={medicalNote}
+                onChange={(e) => setMedicalNote(e.target.value)}
+                placeholder="e.g. Patient has high fever, unconscious, blood type A+, third floor apartment..."
+                style={{ width: '100%', minHeight: 120, background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, color: 'var(--text)', fontSize: '0.9rem', resize: 'none', outline: 'none' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button 
+                onClick={() => setShowMedicalModal(false)}
+                style={{ flex: 1, padding: '14px', background: 'var(--background)', border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 12, fontWeight: 700, cursor: 'pointer' }}
+              >Skip</button>
+              <button 
+                disabled={!medicalNote.trim() || isSubmittingNote}
+                onClick={async () => {
+                  if(!requestId) return;
+                  setIsSubmittingNote(true);
+                  try {
+                    await api.patch(`/api/ride-request/${requestId}/medical-note`, { medical_note: medicalNote }, { headers: { 'x-auth-token': user.token } });
+                    showToast("Medical details shared with driver");
+                    setShowMedicalModal(false);
+                  } catch {
+                    showToast("Failed to share details");
+                  } finally {
+                    setIsSubmittingNote(false);
+                  }
+                }}
+                style={{ flex: 2, padding: '14px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', opacity: medicalNote.trim() ? 1 : 0.5 }}
+              >
+                {isSubmittingNote ? t('btn_update_pass') : t('prof_save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Payment & Rating Modal */}
       {showPaymentModal && activeTrip && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', width: '100%', maxWidth: 400, borderRadius: 20, padding: 32, boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', animation: 'slideUp 0.3s ease-out' }}>
+          <div style={{ background: 'var(--card-bg)', width: '100%', maxWidth: 400, borderRadius: 20, padding: 32, boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', animation: 'slideUp 0.3s ease-out' }}>
             
             {!paymentComplete ? (
               <>
@@ -570,25 +968,25 @@ function PatientDashboard() {
                   <div style={{ width: 56, height: 56, borderRadius: 16, background: '#f0fdf4', color: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                     <CheckCircle size={32} />
                   </div>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#0f172a', fontWeight: 800 }}>Trip Completed</h2>
-                  <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.9rem' }}>Please complete your payment.</p>
+                  <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#0f172a', fontWeight: 800 }}>{t('status_completed')}</h2>
+                  <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.9rem' }}>{t('nav_wallet')} / {t('nav_support')}</p>
                 </div>
-                <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 12, padding: 20, marginBottom: 24 }}>
+                <div style={{ background: 'var(--background)', border: '1px dashed var(--border)', borderRadius: 12, padding: 20, marginBottom: 24 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <span style={{ color: '#64748b', fontSize: '0.9rem' }}>Wallet Balance</span>
+                    <span style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>Wallet Balance</span>
                     <span style={{ color: '#4f46e5', fontWeight: 600 }}>NPR {Number(walletBalance || 0).toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <span style={{ color: '#64748b' }}>Total Distance</span>
-                    <span style={{ fontWeight: 600, color: '#0f172a' }}>{activeTrip.distance || '0'} km</span>
+                    <span style={{ color: 'var(--muted)' }}>Total Distance</span>
+                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{activeTrip.distance || '0'} km</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
-                    <span style={{ color: '#0f172a', fontWeight: 600, fontSize: '1.1rem' }}>Total Fare</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                    <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: '1.1rem' }}>Total Fare</span>
                     <span style={{ color: '#ef4444', fontWeight: 800, fontSize: '1.2rem' }}>NPR {activeTrip.fare}</span>
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <button onClick={() => handlePayFare('cod')} style={{ width: '100%', padding: 14, background: '#f8fafc', color: '#0f172a', border: '1px solid #e2e8f0', borderRadius: 10, fontWeight: 600, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>💵 Cash on Delivery (COD)</button>
+                  <button onClick={() => handlePayFare('cod')} style={{ width: '100%', padding: 14, background: 'var(--background)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>💵 Cash on Delivery (COD)</button>
                   <button onClick={() => handlePayFare('esewa')} style={{ width: '100%', padding: '12px 14px', background: '#60bb46', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                     <img src="https://esewa.com.np/common/images/esewa_logo.png" alt="eSewa" style={{ height: 20, objectFit: 'contain' }} /> Pay with eSewa
                   </button>
@@ -620,7 +1018,7 @@ function PatientDashboard() {
                 </div>
 
                 <button onClick={handleRateDriver} style={{ width: '100%', padding: 14, background: '#0f172a', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, fontSize: '1rem', cursor: 'pointer' }}>
-                  Submit Rating
+                  {t('prof_save')}
                 </button>
                 <button onClick={() => {
                   setShowPaymentModal(false); setRequestStatus("idle"); setSelectedDriver(null); setActiveTrip(null);
@@ -637,29 +1035,67 @@ function PatientDashboard() {
       {/* Timeout Modal */}
       {showTimeoutModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', width: '100%', maxWidth: 400, borderRadius: 20, padding: 32, textAlign: 'center', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', animation: 'slideUp 0.3s ease-out' }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fff7ed', color: '#f97316', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+          <div style={{ background: 'var(--card-bg)', width: '100%', maxWidth: 400, borderRadius: 20, padding: 32, textAlign: 'center', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', animation: 'slideUp 0.3s ease-out' }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(249, 115, 22, 0.1)', color: '#f97316', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
               <Clock size={32} />
             </div>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#0f172a', fontWeight: 800 }}>Request Timed Out</h2>
-            <p style={{ margin: '12px 0 24px', color: '#64748b', fontSize: '0.95rem', lineHeight: 1.5 }}>No drivers were available to accept your request within the last minute. Please try again or book a different ambulance.</p>
+            <h2 style={{ margin: 0, fontSize: '1.5rem', color: 'var(--text)', fontWeight: 800 }}>{t('status_offline')}</h2>
+            <p style={{ margin: '12px 0 24px', color: 'var(--muted)', fontSize: '0.95rem', lineHeight: 1.5 }}>{t('nav_support')}</p>
             <div style={{ display: 'flex', gap: 12 }}>
-              <button onClick={() => setShowTimeoutModal(false)} style={{ flex: 1, padding: '14px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer' }}>Close</button>
-              <button onClick={() => { setShowTimeoutModal(false); handleRequestAmbulance(); }} style={{ flex: 1, padding: '14px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.2)' }}>Retry Now</button>
+              <button onClick={() => setShowTimeoutModal(false)} style={{ flex: 1, padding: '14px', background: 'var(--background)', color: 'var(--muted)', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer' }}>{t('btn_cancel')}</button>
+              <button onClick={() => { setShowTimeoutModal(false); handleRequestAmbulance(); }} style={{ flex: 1, padding: '14px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)' }}>{t('btn_accept')}</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* SOS Confirmation Modal */}
+      {showSOSModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', zIndex: 20000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: '#fff', width: '100%', maxWidth: 420, borderRadius: 24, overflow: 'hidden', boxShadow: '0 25px 60px rgba(0,0,0,0.3)', animation: 'slideUp 0.3s ease-out' }}>
+            <div style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', padding: '32px 32px 24px', textAlign: 'center', color: '#fff' }}>
+              <div style={{ fontSize: '4rem', marginBottom: 12 }}>🆘</div>
+              <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 900 }}>EMERGENCY SOS</h2>
+              <p style={{ margin: '8px 0 0', opacity: 0.9, fontSize: '0.95rem' }}>{t('nav_support')}</p>
+            </div>
+            <div style={{ padding: '24px 32px' }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 16, marginBottom: 24, fontSize: '0.9rem', color: '#991b1b', lineHeight: 1.6 }}>
+                ⚠️ Use ONLY for real emergencies. Your exact GPS location will be shared with all emergency responders immediately.
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button onClick={() => setShowSOSModal(false)} style={{ flex: 1, padding: '14px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 12, fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem' }}>{t('btn_cancel')}</button>
+                <button onClick={confirmSOS} disabled={isSOSLoading} style={{ flex: 2, padding: '14px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 12, fontWeight: 800, cursor: 'pointer', fontSize: '1rem', boxShadow: '0 4px 12px rgba(239,68,68,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  {isSOSLoading ? 'Sending Alert...' : `🚨 ${t('btn_accept')}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating SOS Button (always visible) */}
+      {requestStatus === 'idle' && (
+        <button
+          onClick={handleSOS}
+          disabled={isSOSLoading}
+          style={{ position: 'fixed', bottom: 32, right: 32, width: 64, height: 64, borderRadius: '50%', background: '#ef4444', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '1.4rem', fontWeight: 900, zIndex: 9000, boxShadow: '0 8px 25px rgba(239,68,68,0.5)', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          title="Emergency SOS"
+        >
+          🆘
+        </button>
+      )}
+
       {/* Notifications */}
       {notification && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#0f172a', color: '#fff', padding: '12px 24px', borderRadius: 8, boxShadow: '0 10px 25px rgba(0,0,0,0.2)', fontWeight: 500, fontSize: '0.9rem', zIndex: 10000, display: 'flex', alignItems: 'center', gap: 10, animation: 'slideUp 0.3s ease-out' }}>
+        <div style={{ position: 'fixed', bottom: 110, left: '50%', transform: 'translateX(-50%)', background: '#0f172a', color: '#fff', padding: '12px 24px', borderRadius: 10, boxShadow: '0 10px 25px rgba(0,0,0,0.2)', fontWeight: 500, fontSize: '0.9rem', zIndex: 10000, display: 'flex', alignItems: 'center', gap: 10, animation: 'slideUp 0.3s ease-out', whiteSpace: 'nowrap', maxWidth: '90vw' }}>
           <InfoIcon size={18} color="#cbd5e1" /> {notification}
         </div>
       )}
 
       <style>{`
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeInLeft { from { transform: translateX(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
+        @keyframes fadeInRight { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
         .pulse { animation: pulseAnim 2s infinite; }
         @keyframes pulseAnim { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
       `}</style>
@@ -671,6 +1107,7 @@ function PatientDashboard() {
 }
 
 function PatientHistoryView({ user }) {
+  const { t } = useTranslation();
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -690,11 +1127,11 @@ function PatientHistoryView({ user }) {
   };
 
   return (
-    <div style={{ padding: '32px 24px', maxWidth: 900, margin: '0 auto' }}>
-      <h2 style={{ margin: '0 0 4px', fontSize: '1.6rem', fontWeight: 800, color: '#0f172a' }}>Ride History</h2>
-      <p style={{ margin: '0 0 24px', color: '#64748b' }}>Your completed ambulance trips.</p>
+    <div style={{ padding: '32px var(--container-padding)', maxWidth: 'var(--container-max)', margin: '0 auto' }}>
+      <h2 style={{ margin: '0 0 4px', fontSize: '1.6rem', fontWeight: 800, color: 'var(--text)' }}>{t('nav_history')}</h2>
+      <p style={{ margin: '0 0 24px', color: 'var(--muted)' }}>{t('settings_subtitle')}</p>
 
-      {loading && <p style={{ color: '#64748b' }}>Loading…</p>}
+      {loading && <p style={{ color: 'var(--muted)' }}>Loading…</p>}
       {error && <p style={{ color: '#ef4444' }}>{error}</p>}
 
       {!loading && !error && trips.length === 0 && (
@@ -705,12 +1142,12 @@ function PatientHistoryView({ user }) {
       )}
 
       {!loading && trips.length > 0 && (
-        <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+        <div style={{ background: 'var(--card-bg)', borderRadius: 16, border: '1px solid var(--border)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+              <tr style={{ background: 'var(--background)', borderBottom: '2px solid var(--border)' }}>
                 {['Trip #', 'Date', 'Driver', 'Vehicle', 'Payment', 'Status'].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', color: '#64748b', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>{h}</th>
+                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', color: 'var(--muted)', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -718,12 +1155,12 @@ function PatientHistoryView({ user }) {
               {trips.map((t, i) => {
                 const sc = statusColor(t.payment_status);
                 return (
-                  <tr key={t.id} style={{ borderBottom: i < trips.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                    <td style={{ padding: '14px 16px', fontWeight: 700, color: '#0f172a' }}>#{t.id}</td>
-                    <td style={{ padding: '14px 16px', color: '#475569' }}>{new Date(t.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                    <td style={{ padding: '14px 16px', color: '#0f172a', fontWeight: 500 }}>{t.driver_name || '—'}</td>
-                    <td style={{ padding: '14px 16px', color: '#64748b' }}>{t.vehicle_name || '—'}</td>
-                    <td style={{ padding: '14px 16px', color: '#475569', textTransform: 'capitalize' }}>{t.payment_method || 'COD'}</td>
+                  <tr key={t.id} style={{ borderBottom: i < trips.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                    <td style={{ padding: '14px 16px', fontWeight: 700, color: 'var(--text)' }}>#{t.id}</td>
+                    <td style={{ padding: '14px 16px', color: 'var(--text)' }}>{new Date(t.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td style={{ padding: '14px 16px', color: 'var(--text)', fontWeight: 500 }}>{t.driver_name || '—'}</td>
+                    <td style={{ padding: '14px 16px', color: 'var(--muted)' }}>{t.vehicle_name || '—'}</td>
+                    <td style={{ padding: '14px 16px', color: 'var(--text)', textTransform: 'capitalize' }}>{t.payment_method || 'COD'}</td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ padding: '4px 10px', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, background: sc.bg, color: sc.color }}>
                         {t.payment_status || 'completed'}
@@ -744,4 +1181,3 @@ function InfoIcon(props) {
   return <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>;
 }
 
-export default PatientDashboard;

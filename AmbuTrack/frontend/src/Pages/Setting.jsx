@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import api from '../api';
-import { socket } from '../socket';
+import React, { useState, useEffect, useRef } from "react";
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { User, Phone, Image, Moon, Sun, ShieldCheck, Trash2, LogOut, Info, CheckCircle, AlertTriangle, Lock, Eye, EyeOff } from 'lucide-react';
+import api from "../api";
+import { useTheme } from "../component/ThemeContext";
+import { User, Phone, Image, Moon, Sun, ShieldCheck, Trash2, LogOut, Info, CheckCircle, AlertTriangle, Lock, Eye, EyeOff, Settings } from 'lucide-react';
 import './DriverDashboard.css';
 
 function Toast({ message, type, onDone }) {
@@ -19,6 +20,8 @@ function Toast({ message, type, onDone }) {
 }
 
 export default function Setting() {
+  const { t } = useTranslation();
+  const { darkMode, toggleDarkMode } = useTheme();
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user') || 'null') } catch (e) { return null }
   });
@@ -27,7 +30,6 @@ export default function Setting() {
   const [avatarData, setAvatarData] = useState(user?.avatar || '');
   const [twofa, setTwofa] = useState(user?.twofa_enabled || false);
   const [esewaLinked, setEsewaLinked] = useState(localStorage.getItem(`esewa_${user?.email}`) === 'true');
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [saving, setSaving] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [showPassword, setShowPassword] = useState(false);
@@ -51,12 +53,7 @@ export default function Setting() {
        .catch(() => {});
   }, []);
 
-  function setDocumentTheme(t) {
-    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-    else document.documentElement.removeAttribute('data-theme');
-    localStorage.setItem('theme', t);
-    setTheme(t);
-  }
+
 
   function onFileChange(e) {
     const f = e.target.files && e.target.files[0];
@@ -151,12 +148,12 @@ export default function Setting() {
   }
 
   return (
-    <div className="driver-dash" style={{ maxWidth: 800, margin: '0 auto' }}>
+    <div className="driver-dash app-container" style={{ maxWidth: 'var(--container-max)', margin: '0 auto', padding: '0 var(--container-padding)' }}>
       <div className="dash-header" style={{ marginBottom: 30 }}>
         <div className="dash-greeting">
           <div className="dash-info">
-            <h1>Account Settings</h1>
-            <div className="dash-subtitle">Manage your profile, appearance, and security preferences</div>
+            <h1>{t('settings_title')}</h1>
+            <div className="dash-subtitle">{t('settings_subtitle')}</div>
           </div>
         </div>
       </div>
@@ -165,7 +162,7 @@ export default function Setting() {
         
         {/* Profile Details */}
         <div className="glass-card">
-          <h2 className="glass-card-title"><User size={18} /> Profile Details</h2>
+          <h2 className="glass-card-title"><User size={18} /> {t('prof_details')}</h2>
           <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
               <div style={{ 
@@ -191,35 +188,35 @@ export default function Setting() {
             
             <div style={{ flex: 1, minWidth: 250, display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>Full Name</label>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>{t('prof_name')}</label>
                 <div style={{ position: 'relative' }}>
                   <User size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: 12 }} />
                   <input 
                     type="text" 
                     value={name} 
                     onChange={e => setName(e.target.value)}
-                    placeholder="Enter your name"
+                    placeholder={t('prof_name')}
                     style={{ 
                       width: '100%', padding: '10px 12px 10px 36px', borderRadius: 8,
-                      border: '1px solid var(--card-border)', background: '#fff',
-                      fontSize: '0.9rem', color: 'var(--text-primary)', outline: 'none'
+                      border: '1px solid var(--border)', background: 'var(--background)',
+                      fontSize: '0.9rem', color: 'var(--text)', outline: 'none'
                     }}
                   />
                 </div>
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>Phone Number</label>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>{t('prof_phone')}</label>
                 <div style={{ position: 'relative' }}>
                   <Phone size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: 12 }} />
                   <input 
                     type="text" 
                     value={phone} 
                     onChange={e => setPhone(e.target.value)}
-                    placeholder="Enter phone number"
+                    placeholder={t('prof_phone')}
                     style={{ 
                       width: '100%', padding: '10px 12px 10px 36px', borderRadius: 8,
-                      border: '1px solid var(--card-border)', background: '#fff',
-                      fontSize: '0.9rem', color: 'var(--text-primary)', outline: 'none'
+                      border: '1px solid var(--border)', background: 'var(--background)',
+                      fontSize: '0.9rem', color: 'var(--text)', outline: 'none'
                     }}
                   />
                 </div>
@@ -234,7 +231,7 @@ export default function Setting() {
                     opacity: saving ? 0.7 : 1, transition: 'all 0.2s', boxShadow: 'var(--shadow-sm)'
                   }}
                 >
-                  {saving ? 'Saving...' : 'Save Changes'}
+                  {saving ? t('prof_saving') : t('prof_save')}
                 </button>
                 <button 
                   onClick={logout}
@@ -246,9 +243,44 @@ export default function Setting() {
                   onMouseOver={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--text-muted)'; }}
                   onMouseOut={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
                 >
-                  <LogOut size={16} /> Logout
+                  <LogOut size={16} /> {t('nav_logout')}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* App Preferences */}
+        <div className="glass-card">
+          <h2 className="glass-card-title"><Settings size={18} /> {t('app_prefs')}</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderRadius: 12, background: 'var(--background)', border: '1px solid var(--border)' }}>
+              <div>
+                <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text)' }}>{t('pref_lang')}</strong>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Choose language / भाषा छान्नुहोस्</span>
+              </div>
+              <button 
+                onClick={() => {
+                  const newLang = localStorage.getItem('ambutrack_lang') === 'ne' ? 'en' : 'ne';
+                  localStorage.setItem('ambutrack_lang', newLang);
+                  window.location.reload();
+                }}
+                style={{ padding: '6px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+              >
+                {localStorage.getItem('ambutrack_lang') === 'ne' ? 'Nepali (🇳🇵)' : 'English (🇬🇧)'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderRadius: 12, background: 'var(--background)', border: '1px solid var(--border)' }}>
+              <div>
+                <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text)' }}>{t('pref_dark')}</strong>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t('pref_theme')}</span>
+              </div>
+              <button 
+                onClick={toggleDarkMode}
+                style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.85rem' }}
+              >
+                {darkMode ? <><Sun size={14} color="#fbbf24" /> Light</> : <><Moon size={14} /> Dark</>}
+              </button>
             </div>
           </div>
         </div>
@@ -257,16 +289,16 @@ export default function Setting() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 24 }}>
           
           <div className="glass-card">
-            <h2 className="glass-card-title"><Sun size={18} /> Appearance</h2>
+            <h2 className="glass-card-title"><Sun size={18} /> {t('pref_dark')}</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-              Customize how AmbuTrack looks on your device.
+              {t('pref_theme')}
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
               <button 
-                onClick={() => setDocumentTheme('light')}
+                onClick={() => darkMode && toggleDarkMode()}
                 style={{
-                  flex: 1, padding: '12px', border: `2px solid ${theme !== 'dark' ? 'var(--blue)' : 'var(--card-border)'}`,
-                  background: theme !== 'dark' ? 'var(--blue-soft)' : '#fff', color: theme !== 'dark' ? 'var(--blue)' : 'var(--text-secondary)',
+                  flex: 1, padding: '12px', border: `2px solid ${!darkMode ? 'var(--primary)' : 'var(--border)'}`,
+                  background: !darkMode ? 'rgba(229, 57, 53, 0.1)' : 'var(--background)', color: !darkMode ? 'var(--primary)' : 'var(--muted)',
                   borderRadius: 10, fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, transition: 'all 0.2s'
                 }}
@@ -274,10 +306,10 @@ export default function Setting() {
                 <Sun size={24} /> Light Mode
               </button>
               <button 
-                onClick={() => setDocumentTheme('dark')}
+                onClick={() => !darkMode && toggleDarkMode()}
                 style={{
-                  flex: 1, padding: '12px', border: `2px solid ${theme === 'dark' ? 'var(--blue)' : 'var(--card-border)'}`,
-                  background: theme === 'dark' ? 'var(--blue-soft)' : '#fff', color: theme === 'dark' ? 'var(--blue)' : 'var(--text-secondary)',
+                  flex: 1, padding: '12px', border: `2px solid ${darkMode ? 'var(--primary)' : 'var(--border)'}`,
+                  background: darkMode ? 'rgba(229, 57, 53, 0.1)' : 'var(--background)', color: darkMode ? 'var(--primary)' : 'var(--muted)',
                   borderRadius: 10, fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, transition: 'all 0.2s'
                 }}
@@ -288,18 +320,18 @@ export default function Setting() {
           </div>
 
           <div className="glass-card">
-            <h2 className="glass-card-title"><ShieldCheck size={18} /> Security</h2>
+            <h2 className="glass-card-title"><ShieldCheck size={18} /> {t('sec_title')}</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-              Enhance your account security with two-factor authentication.
+              {t('sec_2fa_desc')}
             </p>
             <div style={{ 
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
               padding: '16px', background: 'var(--dash-bg)', borderRadius: 10, border: '1px solid var(--card-border)'
             }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Two-Factor Auth</div>
+                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{t('sec_2fa')}</div>
                 <div style={{ fontSize: '0.75rem', color: twofa ? 'var(--green)' : 'var(--text-muted)', marginTop: 4, fontWeight: 500 }}>
-                  Status: {twofa ? 'Enabled' : 'Disabled'}
+                  {twofa ? 'Enabled' : 'Disabled'}
                 </div>
               </div>
               <button 
@@ -310,7 +342,7 @@ export default function Setting() {
                   transition: 'all 0.2s'
                 }}
               >
-                {twofa ? 'Disable' : 'Enable 2FA'}
+                {twofa ? t('btn_disable_2fa') : t('btn_enable_2fa')}
               </button>
             </div>
           </div>
@@ -328,7 +360,7 @@ export default function Setting() {
               padding: '16px', background: 'var(--dash-bg)', borderRadius: 10, border: '1px solid var(--card-border)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 44, height: 44, background: '#fff', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+                <div style={{ width: 44, height: 44, background: 'var(--card-bg)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
                   <img src="https://esewa.com.np/common/images/esewa_logo.png" alt="eSewa" style={{ height: 16 }} />
                 </div>
                 <div>
@@ -353,9 +385,9 @@ export default function Setting() {
         </div>
 
         <div className="glass-card">
-          <h2 className="glass-card-title"><Lock size={18} /> Change Password</h2>
+          <h2 className="glass-card-title"><Lock size={18} /> {t('change_pass')}</h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-            Keep your account secure by updating your password regularly.
+            {t('settings_subtitle')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ position: 'relative' }}>
@@ -364,7 +396,7 @@ export default function Setting() {
                 type={showPassword ? "text" : "password"}
                 value={passForm.current}
                 onChange={e => setPassForm({...passForm, current: e.target.value})}
-                placeholder="Current Password"
+                placeholder={t('pass_curr')}
                 style={passwordInputStyle}
               />
             </div>
@@ -374,7 +406,7 @@ export default function Setting() {
                 type={showPassword ? "text" : "password"}
                 value={passForm.new}
                 onChange={e => setPassForm({...passForm, new: e.target.value})}
-                placeholder="New Password"
+                placeholder={t('pass_new')}
                 style={passwordInputStyle}
               />
             </div>
@@ -384,7 +416,7 @@ export default function Setting() {
                 type={showPassword ? "text" : "password"}
                 value={passForm.confirm}
                 onChange={e => setPassForm({...passForm, confirm: e.target.value})}
-                placeholder="Confirm New Password"
+                placeholder={t('pass_conf')}
                 style={passwordInputStyle}
               />
               <button 
@@ -403,16 +435,16 @@ export default function Setting() {
                 opacity: changingPass ? 0.7 : 1, transition: 'all 0.2s', marginTop: 4
               }}
             >
-              {changingPass ? 'Updating...' : 'Update Password'}
+              {changingPass ? t('prof_saving') : t('btn_update_pass')}
             </button>
           </div>
         </div>
 
         {/* Danger Zone */}
         <div className="glass-card" style={{ borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
-          <h2 className="glass-card-title" style={{ color: 'var(--accent)' }}><Trash2 size={18} /> Danger Zone</h2>
+          <h2 className="glass-card-title" style={{ color: 'var(--accent)' }}><Trash2 size={18} /> {t('danger_zone')}</h2>
           <p style={{ fontSize: '0.85rem', color: '#b91c1c', marginBottom: 16 }}>
-            Permanently delete your account and all associated data. This action cannot be undone.
+            {t('delete_acc_desc')}
           </p>
           <button 
             onClick={deleteAccount}
@@ -424,7 +456,7 @@ export default function Setting() {
             onMouseOver={e => e.currentTarget.style.background = '#dc2626'}
             onMouseOut={e => e.currentTarget.style.background = 'var(--accent)'}
           >
-            <Trash2 size={16} /> Delete Account
+            <Trash2 size={16} /> {t('delete_acc')}
           </button>
         </div>
 
@@ -437,6 +469,6 @@ export default function Setting() {
 
 const passwordInputStyle = {
   width: '100%', padding: '10px 12px 10px 36px', borderRadius: 8,
-  border: '1px solid var(--card-border)', background: '#fff',
-  fontSize: '0.9rem', color: 'var(--text-primary)', outline: 'none'
+  border: '1px solid var(--border)', background: 'var(--background)',
+  fontSize: '0.9rem', color: 'var(--text)', outline: 'none'
 };

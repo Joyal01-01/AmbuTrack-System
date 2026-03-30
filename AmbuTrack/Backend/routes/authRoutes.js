@@ -1,6 +1,11 @@
 import express from "express";
 import db from "../config/db.js";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+
+const resetTokens = new Map();
+
+const generateToken = () => crypto.randomBytes(24).toString('hex');
 
 const router = express.Router();
 
@@ -9,11 +14,11 @@ router.post("/register", async (req, res) => {
 
   const insertUser = async () => {
     const hashed = await bcrypt.hash(password, 10);
-    const sql = "INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)";
-    db.query(sql, [name, email, hashed, role], (err) => {
+    const token = generateToken();
+    const sql = "INSERT INTO users (name,email,password,role,token) VALUES (?,?,?,?,?)";
+    db.query(sql, [name, email, hashed, role, token], (err, r) => {
       if (err) return res.status(500).json(err);
       if (role === 'driver' && global.io) {
-        // Find all connected admins and notify them
         const registry = global.io.registry || {};
         Object.keys(registry).forEach(sid => {
           if (registry[sid]?.role === 'admin') {
@@ -21,7 +26,7 @@ router.post("/register", async (req, res) => {
           }
         });
       }
-      res.json({ message: "User Registered" });
+      res.json({ message: "User Registered", token, id: r.insertId });
     });
   };
 
@@ -38,36 +43,68 @@ router.post("/register", async (req, res) => {
 });
 
 router.post("/login", (req, res) => {
-
   const { email, password } = req.body;
+  console.log(`Login attempt for: ${email}`);
+  db.query("SELECT * FROM users WHERE email=?", [email], async (err, result) => {
+    if (err) { console.error("Login DB Error:", err); return res.status(500).json(err); }
+    if (result.length === 0) { console.log(`Login failed: User ${email} not found`); return res.status(400).json("User not found"); }
 
-  db.query(
-    "SELECT * FROM users WHERE email=?",
-    [email],
-    async (err, result) => {
+    const user = result[0];
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) { console.log(`Login failed: Invalid password for ${email}`); return res.status(400).json("Wrong password"); }
 
-      if (result.length === 0)
-        return res.status(400).json("User not found");
+    if (user.twofa_enabled) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      resetTokens.set(`2fa_${email}`, { otp, expiresAt, userId: user.id });
 
-      const user = result[0];
-
-      const valid = await bcrypt.compare(password, user.password);
-
-      if (!valid)
-        return res.status(400).json("Wrong password");
-
-      res.json(user);
-
+      const html = `<div style="padding:20px;border:1px solid #ddd;border-radius:10px;"><h2>Login Verification</h2><p>Your 2FA code is: <b>${otp}</b></p></div>`;
+      
+      if (global.mailTransporter) {
+        global.mailTransporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: email,
+          subject: "AmbuTrack - 2FA Code",
+          html
+        }).catch(e => console.error("2FA Mail Error:", e));
+      } else {
+        console.log(`[DEV] 2FA OTP for ${email}: ${otp}`);
+      }
+      console.log(`2FA triggered for ${email}`);
+      return res.json({ twofa: true });
     }
-  );
 
+    console.log(`Login successful for ${email}`);
+
+    const token = generateToken();
+    db.query("UPDATE users SET token=? WHERE id=?", [token, user.id], (updErr) => {
+      if (updErr) return res.status(500).json(updErr);
+      res.json({ ...user, token });
+    });
+  });
+});
+
+router.post("/login-verify", (req, res) => {
+  const { email, otp } = req.body;
+  const record = resetTokens.get(`2fa_${email}`);
+
+  if (!record || record.otp !== otp || Date.now() > record.expiresAt) {
+    return res.status(400).json("Invalid or expired code");
+  }
+
+  db.query("SELECT * FROM users WHERE id=?", [record.userId], (err, rows) => {
+    if (err || !rows.length) return res.status(500).json("Error fetching user");
+    const user = rows[0];
+    const token = generateToken();
+    db.query("UPDATE users SET token=? WHERE id=?", [token, user.id], (updErr) => {
+      if (updErr) return res.status(500).json(updErr);
+      resetTokens.delete(`2fa_${email}`);
+      res.json({ ...user, token });
+    });
+  });
 });
 
 // --- Password Reset Flows ---
-
-// Temporary in-memory store for reset OTPs: email -> { otp, expiresAt }
-// In production, this should be in Redis or DB.
-const resetTokens = new Map();
 
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
@@ -79,7 +116,7 @@ router.post("/forgot-password", async (req, res) => {
 
     const user = rows[0];
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const expiresAt = Date.now() + 10 * 60 * 1000;
 
     resetTokens.set(email, { otp, expiresAt });
 
@@ -126,7 +163,7 @@ router.post("/reset-password", async (req, res) => {
     const hashed = await bcrypt.hash(newPassword, 10);
     db.query("UPDATE users SET password=? WHERE email=?", [hashed, email], (err, result) => {
       if (err) return res.status(500).json({ error: "Database error" });
-      resetTokens.delete(email); // Invalidate OTP
+      resetTokens.delete(email);
       res.json({ message: "Password updated successfully." });
     });
   } catch (err) {

@@ -143,7 +143,7 @@ export default function Support() {
       </section>
 
       {/* Main Content: FAQ & Form */}
-      <section style={{ ...sectionStyle, background: '#f8fafc' }}>
+      <section style={{ ...sectionStyle, background: 'var(--background)' }}>
         <div style={containerStyle}>
           <div style={contentGridStyle}>
             {/* FAQ Section */}
@@ -257,7 +257,7 @@ export default function Support() {
 }
 
 // Styles
-const pageStyle = { fontFamily: 'Inter, sans-serif', color: '#1e293b', backgroundColor: '#fff' };
+const pageStyle = { fontFamily: 'Inter, sans-serif', color: 'var(--text)', backgroundColor: 'var(--background)' };
 const containerStyle = { maxWidth: '1200px', margin: '0 auto', padding: '0 20px' };
 const sectionStyle = { padding: '80px 0' };
 const heroStyle = { background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', color: '#fff', padding: '100px 0', textAlign: 'center' };
@@ -267,25 +267,25 @@ const searchContainerStyle = { position: 'relative', maxWidth: '600px', margin: 
 const searchIconStyle = { position: 'absolute', left: '20px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' };
 const searchInputStyle = { width: '100%', padding: '20px 20px 20px 55px', borderRadius: '16px', border: 'none', fontSize: '1rem', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.3)', outline: 'none', boxSizing: 'border-box' };
 const cardGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '30px' };
-const supportCardStyle = { padding: '40px', borderRadius: '24px', background: '#fff', border: '1px solid #e2e8f0', textAlign: 'center' };
+const supportCardStyle = { padding: '40px', borderRadius: '24px', background: 'var(--card-bg)', border: '1px solid var(--border)', textAlign: 'center' };
 const iconBoxStyle = { width: '60px', height: '60px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' };
-const cardTitleStyle = { fontSize: '1.25rem', fontWeight: 800, marginBottom: '10px' };
-const cardTextStyle = { fontSize: '0.95rem', color: '#64748b', marginBottom: '20px' };
+const cardTitleStyle = { fontSize: '1.25rem', fontWeight: 800, marginBottom: '10px', color: 'var(--text)' };
+const cardTextStyle = { fontSize: '0.95rem', color: 'var(--muted)', marginBottom: '20px' };
 const cardLinkStyle = { color: '#ef4444', fontWeight: 700, fontSize: '1rem', textDecoration: 'none' };
 const contentGridStyle = { display: 'grid', gridTemplateColumns: '1fr 450px', gap: '60px', alignItems: 'start' };
-const sectionTitleStyle = { fontSize: '2rem', fontWeight: 900, marginBottom: '30px', letterSpacing: '-0.02em' };
+const sectionTitleStyle = { fontSize: '2rem', fontWeight: 900, marginBottom: '30px', letterSpacing: '-0.02em', color: 'var(--text)' };
 const faqListStyle = { display: 'flex', flexDirection: 'column', gap: '15px' };
-const faqItemStyle = { background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden' };
-const faqHeaderStyle = { width: '100%', padding: '20px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' };
-const faqQuestionStyle = { fontSize: '1rem', fontWeight: 700, color: '#1e293b' };
-const faqAnswerStyle = { padding: '0 25px 20px', color: '#64748b', lineHeight: '1.6', fontSize: '0.95rem' };
-const contactFormContainerStyle = { background: '#fff', padding: '40px', borderRadius: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', border: '1px solid #e2e8f0' };
+const faqItemStyle = { background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border)', overflow: 'hidden' };
+const faqHeaderStyle = { width: '100%', padding: '20px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--text)' };
+const faqQuestionStyle = { fontSize: '1rem', fontWeight: 700, color: 'inherit' };
+const faqAnswerStyle = { padding: '0 25px 20px', color: 'var(--muted)', lineHeight: '1.6', fontSize: '0.95rem' };
+const contactFormContainerStyle = { background: 'var(--card-bg)', padding: '40px', borderRadius: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', border: '1px solid var(--border)' };
 const formStyle = { display: 'flex', flexDirection: 'column', gap: '20px' };
 const formGroupStyle = { display: 'flex', flexDirection: 'column', gap: '8px' };
-const labelStyle = { fontSize: '0.9rem', fontWeight: 700, color: '#475569' };
-const inputStyle = { padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '0.95rem', outline: 'none', fontFamily: 'Inter, sans-serif' };
-const submitButtonStyle = { padding: '14px', background: '#1e293b', color: '#fff', border: 'none', borderRadius: '12px', fontWeight: 700, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginTop: '10px' };
+const labelStyle = { fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' };
+const inputStyle = { padding: '12px 16px', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '0.95rem', outline: 'none', fontFamily: 'Inter, sans-serif', background: 'var(--background)', color: 'var(--text)' };
+const submitButtonStyle = { padding: '14px', background: 'var(--text)', color: 'var(--background)', border: 'none', borderRadius: '12px', fontWeight: 700, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginTop: '10px' };
 const trustGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '40px', textAlign: 'center' };
 const trustItemStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' };
-const trustTitleStyle = { fontSize: '1.2rem', fontWeight: 800, margin: 0 };
-const trustTextStyle = { fontSize: '0.9rem', color: '#64748b', lineHeight: '1.5' };
+const trustTitleStyle = { fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text)' };
+const trustTextStyle = { fontSize: '0.9rem', color: 'var(--muted)', lineHeight: '1.5' };

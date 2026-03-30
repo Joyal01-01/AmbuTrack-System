@@ -16,21 +16,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import adminRoutes from "./routes/adminRoutes.js";
-import userRoutes from "./routes/user.js"; 
 import driverRoutes from "./routes/driverRoutes.js";
 import tripRoutes from "./routes/tripRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
+import sosRoutes from "./routes/sosRoutes.js";
+import authRoutes from "./routes/authRoutes.js"; // New Import
+import { sendSMS } from "./services/twilio.js";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use("/api/admin",adminRoutes);
-app.use("/api", userRoutes);
-app.use("/api/driver", driverRoutes);
-app.use("/api/trips", tripRoutes);
-app.use("/api/chat", chatRoutes);
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Serve static frontend assets
@@ -57,6 +54,14 @@ origin:"*"
 
 // expose io globally so route modules can emit events to sockets
 global.io = io;
+app.set('socketio', io);
+
+app.use("/api/admin", adminRoutes);
+app.use("/api/driver", driverRoutes);
+app.use("/api/trip", tripRoutes);
+app.use("/api/chat", chatRoutes);
+app.use('/api/sos', sosRoutes);
+app.use("/api", authRoutes);
 
 /* MySQL Connection */
 
@@ -94,7 +99,10 @@ if(process.env.SMTP_USER && process.env.SMTP_PASS){
 				auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
 			});
 		}
-		if(mailTransporter) console.log('Mail transporter configured');
+		if(mailTransporter) {
+			console.log('Mail transporter configured');
+			global.mailTransporter = mailTransporter; // Expose globally
+		}
 	}catch(e){
 		console.log('Failed to configure mail transporter', e);
 		mailTransporter = null;
@@ -152,11 +160,19 @@ const createRideRequestsTable = `CREATE TABLE IF NOT EXISTS ride_requests (
 );`;
 
 const createOtpsTable = `CREATE TABLE IF NOT EXISTS otps (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    email VARCHAR(255),
+    code VARCHAR(10),
+    expires_at DATETIME,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`;
+
+const createTransactionsTable = `CREATE TABLE IF NOT EXISTS transactions (
 	id INT PRIMARY KEY AUTO_INCREMENT,
-	email VARCHAR(255),
-	code VARCHAR(64),
-	expires_at DATETIME,
-	used BOOLEAN DEFAULT FALSE,
+	user_id INT,
+	amount DECIMAL(10,2),
+	type ENUM('credit', 'debit'),
+	description VARCHAR(255),
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`;
 
@@ -176,7 +192,8 @@ const initDB = async () => {
             { name: 'ambulances', sql: createAmbulancesTable },
             { name: 'trips', sql: createTripsTable },
             { name: 'ride_requests', sql: createRideRequestsTable },
-            { name: 'otps', sql: createOtpsTable }
+            { name: 'otps', sql: createOtpsTable },
+            { name: 'transactions', sql: createTransactionsTable }
         ];
 
         for (const t of createTables) {
@@ -217,7 +234,12 @@ const initDB = async () => {
             "ALTER TABLE users ADD COLUMN createdAt DATETIME DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE users ADD COLUMN updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
             "ALTER TABLE users MODIFY createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
-            "ALTER TABLE users MODIFY updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+            "ALTER TABLE users MODIFY updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN ocr_result LONGTEXT NULL",
+            "ALTER TABLE users ADD COLUMN ocr_flags TEXT NULL",
+            "ALTER TABLE ride_requests ADD COLUMN medical_note TEXT NULL",
+            "ALTER TABLE users ADD COLUMN medical_history TEXT NULL",
+            "ALTER TABLE ride_requests ADD COLUMN otp VARCHAR(10) NULL"
         ];
 
         for (const stmt of alters) {
@@ -226,7 +248,7 @@ const initDB = async () => {
             } catch (err) {
                 // Ignore duplicate column errors or duplicate key name errors
                 if (!/Duplicate column/i.test(err.message) && !/Duplicate key name/i.test(err.message)) {
-                    console.log(`Migration message for "${stmt}":`, err.message);
+                // Success, no log needed per migration loop
                 }
             }
         }
@@ -344,13 +366,47 @@ app.post('/api/send-otp', (req, res) => {
 	}catch(e){ res.status(500).send('Error') }
 });
 
+// GET user wallet balance
+app.get('/api/user/wallet', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT wallet_balance AS balance FROM users WHERE token=?', [token], (err, r) => {
+		if(err) return res.status(500).send(err);
+		if(!r.length) return res.status(401).send('Unauthorized');
+		res.send({ balance: r[0].balance || 0 });
+	});
+});
+
+// Recharge wallet (Mock)
+app.post('/api/user/wallet/recharge', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	const { amount } = req.body;
+	if(!token) return res.status(401).send('Unauthorized');
+	if(!amount || amount <= 0) return res.status(400).send('Invalid amount');
+	
+	db.query('UPDATE users SET wallet_balance = wallet_balance + ? WHERE token=?', [amount, token], (err, result) => {
+		if(err) return res.status(500).send(err);
+		res.send({ ok: true, message: 'Wallet recharged successfully' });
+	});
+});
+
 // Register using OTP and handling file uploads
 app.post("/api/register", upload.fields([{ name: 'licensePhoto', maxCount: 1 }, { name: 'nidPhoto', maxCount: 1 }]), async (req,res)=>{
 	try{
 		const {name, email, password, role, otp, phone, address, vehicleNumber, vehicleModel, vehicleType, licenseNumber, licenseExpiry, nidNumber} = req.body;
 		if(!email || !password || !otp) return res.status(400).send('Missing required fields or OTP');
 
-		if(role === 'admin') return res.status(403).send('Admin registration is restricted');
+		// Admin-to-Admin creation bypass: If a valid admin token is provided, skip OTP check
+		const adminToken = req.headers['x-auth-token'];
+		let isAdminCreation = false;
+		if (role === 'admin' && adminToken) {
+			const adminRows = await new Promise(resolve => db.query('SELECT role FROM users WHERE token=?', [adminToken], (e, r) => resolve(r)));
+			if (adminRows && adminRows.length > 0 && adminRows[0].role === 'admin') {
+				isAdminCreation = true;
+			}
+		}
+
+		if(role === 'admin' && !isAdminCreation) return res.status(403).send('Admin registration is restricted');
 
 		const licensePhoto = req.files['licensePhoto'] ? `/uploads/${req.files['licensePhoto'][0].filename}` : null;
 		const nidPhoto = req.files['nidPhoto'] ? `/uploads/${req.files['nidPhoto'][0].filename}` : null;
@@ -390,6 +446,10 @@ app.post("/api/register", upload.fields([{ name: 'licensePhoto', maxCount: 1 }, 
 				res.send({ message: 'Registered successfully', id: result.insertId });
 			});
 		};
+
+		if (isAdminCreation) {
+			return registerUser();
+		}
 
 		// verify OTP
 		db.query('SELECT * FROM otps WHERE email=? AND code=? AND used=0 AND expires_at>NOW() ORDER BY id DESC LIMIT 1',[email, otp], async (err, rows)=>{
@@ -547,7 +607,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 app.get('/api/user/profile', (req, res) => {
 	const token = req.headers['x-auth-token'];
 	if(!token) return res.status(401).send('Unauthorized');
-	db.query('SELECT id, name, email, role, phone, address, wallet_balance, twofa_enabled, approval_status, avatar FROM users WHERE token=?',[token], (err, r)=>{
+	db.query('SELECT id, name, email, role, phone, address, wallet_balance, twofa_enabled, approval_status, avatar, medical_history FROM users WHERE token=?',[token], (err, r)=>{
 		if(err) return res.status(500).send(err);
 		if(!r.length) return res.status(401).send('Unauthorized');
 		res.send(r[0]);
@@ -570,7 +630,7 @@ app.post('/api/user/2fa', (req, res) => {
 	});
 });
 
-// Update profile (name, phone, avatar)
+// Update profile (name, phone, avatar, medical_history)
 app.post('/api/user/update', (req, res) => {
 	const token = req.headers['x-auth-token'] || req.body.token;
 	if(!token) return res.status(401).send('Unauthorized');
@@ -578,8 +638,8 @@ app.post('/api/user/update', (req, res) => {
 		if(err) return res.status(500).send(err);
 		if(!r.length) return res.status(401).send('Unauthorized');
 		const user = r[0];
-		const { name, phone, avatar } = req.body || {};
-		db.query('UPDATE users SET name=?, phone=?, avatar=? WHERE id=?',[name||user.name, phone||user.phone, avatar||user.avatar, user.id], (e)=>{
+		const { name, phone, avatar, medical_history } = req.body || {};
+		db.query('UPDATE users SET name=?, phone=?, avatar=?, medical_history=? WHERE id=?',[name||user.name, phone||user.phone, avatar||user.avatar, medical_history||user.medical_history, user.id], (e)=>{
 			if(e) return res.status(500).send(e);
 			res.send({ ok:true });
 		});
@@ -660,12 +720,14 @@ app.post('/api/ride-request', (req,res)=>{
 		// only patients may create ride requests
 		if(user.role !== 'patient') return res.status(403).send('Forbidden');
 		
+		const otp = Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit OTP
+		
 		const insertSql = driver_user_id 
-		  ? 'INSERT INTO ride_requests(user_id,lat,lng,name,requested_driver_id) VALUES(?,?,?,?,?)'
-		  : 'INSERT INTO ride_requests(user_id,lat,lng,name) VALUES(?,?,?,?)';
+		  ? 'INSERT INTO ride_requests(user_id,lat,lng,name,requested_driver_id,otp) VALUES(?,?,?,?,?,?)'
+		  : 'INSERT INTO ride_requests(user_id,lat,lng,name,otp) VALUES(?,?,?,?,?)';
 		const insertParams = driver_user_id 
-		  ? [user.id, lat, lng, user.name || 'Patient', driver_user_id]
-		  : [user.id, lat, lng, user.name || 'Patient'];
+		  ? [user.id, lat, lng, user.name || 'Patient', driver_user_id, otp]
+		  : [user.id, lat, lng, user.name || 'Patient', otp];
 
 		db.query(insertSql, insertParams, (e, resu)=>{
 			if(e) return res.status(500).send(e);
@@ -680,13 +742,82 @@ app.post('/api/ride-request', (req,res)=>{
 					}
 				} 
 			});
-			res.send({ id, targeted: !!driver_user_id });
+			res.send({ id, targeted: !!driver_user_id, otp });
 		});
 	});
 });
 
 app.get('/api/ride-requests', (req,res)=>{
-	db.query('SELECT rr.*, u.name AS name FROM ride_requests rr LEFT JOIN users u ON u.id=rr.user_id WHERE rr.status="pending"', (err, r)=>{ if(err) return res.status(500).send(err); res.send(r) });
+	// Only return pending requests from the last 1 minute
+	db.query('SELECT rr.*, u.name AS name FROM ride_requests rr LEFT JOIN users u ON u.id=rr.user_id WHERE rr.status="pending" AND rr.created_at > NOW() - INTERVAL 1 MINUTE', (err, r)=>{ if(err) return res.status(500).send(err); res.send(r) });
+});
+
+// PATCH /api/ride-request/:id/medical-note — patient adds medical info during wait
+app.patch('/api/ride-request/:id/medical-note', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	const { medical_note } = req.body;
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, r) => {
+		if(err) return res.status(500).send(err);
+		if(!r.length) return res.status(401).send('Unauthorized');
+		const user = r[0];
+		const requestId = req.params.id;
+		// Ensure the request belongs to this patient
+		db.query('SELECT * FROM ride_requests WHERE id=? AND user_id=?', [requestId, user.id], (e, rows) => {
+			if(e) return res.status(500).send(e);
+			if(!rows.length) return res.status(404).send('Request not found');
+			db.query('UPDATE ride_requests SET medical_note=? WHERE id=?', [medical_note, requestId], (e2) => {
+				if(e2) return res.status(500).send(e2);
+				// Broadcast updated note to driver who accepted (if any)
+				const req_row = rows[0];
+				if(req_row.accepted_by && global.io) {
+					const registry = global.io.registry || {};
+					Object.keys(registry).forEach(sid => {
+						if(registry[sid] && registry[sid].userId === req_row.accepted_by) {
+							global.io.to(sid).emit('medical_note_update', {
+								requestId,
+								patientName: user.name,
+								medicalNote: medical_note
+							});
+						}
+					});
+				}
+				// Also broadcast to all drivers who may have this request in their pending list
+				if(global.io) {
+					const registry = global.io.registry || {};
+					Object.keys(registry).forEach(sid => {
+						if(registry[sid] && registry[sid].role === 'driver') {
+							global.io.to(sid).emit('medical_note_update', { requestId, patientName: user.name, medicalNote: medical_note });
+						}
+					});
+				}
+				res.send({ ok: true });
+			});
+		});
+	});
+});
+
+// Backend Cleanup: Mark stale requests as timed_out every minute
+setInterval(() => {
+	db.query("UPDATE ride_requests SET status='timed_out' WHERE status='pending' AND created_at < NOW() - INTERVAL 1 MINUTE");
+}, 60000);
+
+// Proxy for OSRM Turn-by-Turn Routing
+app.get('/api/route', async (req, res) => {
+	const { startLat, startLng, endLat, endLng } = req.query;
+	if (!startLat || !startLng || !endLat || !endLng) return res.status(400).json({ error: 'Missing coordinates' });
+	try {
+		// OSRM format: lon,lat;lon,lat
+		const url = `http://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+		// Dynamic import node-fetch if needed, or use native fetch in Node 18+
+		const fetch = global.fetch || (await import('node-fetch')).default;
+		const response = await fetch(url);
+		const data = await response.json();
+		res.json(data);
+	} catch (e) {
+		console.error("OSRM Route Error:", e);
+		res.status(500).json({ error: "Routing failed" });
+	}
 });
 
 // Admin: list all ride requests (requires admin token)
@@ -788,16 +919,154 @@ app.post('/api/mail-test', async (req, res) => {
 // Cancel ride request (e.g. on timeout or patient change of mind)
 app.post('/api/ride-request/:id/cancel', (req, res) => {
 	const id = req.params.id;
-	// Allow cancellation if the request is still pending
-	db.query('UPDATE ride_requests SET status="cancelled" WHERE id=? AND status="pending"', [id], (err, result) => {
+	// Allow cancellation if the request is pending, accepted, or arrived, but not if trip has started
+	db.query('UPDATE ride_requests SET status="cancelled" WHERE id=? AND status IN ("pending", "accepted", "arrived")', [id], (err, result) => {
 		if(err) return res.status(500).send(err);
-		if(result.affectedRows === 0) return res.status(409).send('Unable to cancel (already accepted or completed)');
+		if(result.affectedRows === 0) return res.status(409).json({ message: 'Unable to cancel (trip already in progress or completed)', status: 'in_progress' });
 		
-		// Optional: emit to all drivers that this request is no longer available
-		io.emit('ride_cancelled', { id });
-		res.send({ ok:true, message:'Request cancelled' });
+		// Notify the driver (if one accepted) via socket that request was cancelled
+		db.query('SELECT accepted_by FROM ride_requests WHERE id=?', [id], (err2, rows) => {
+			if(rows && rows[0] && rows[0].accepted_by) {
+				const registry = global.io.registry || {};
+				Object.keys(registry).forEach(sid => {
+					if(registry[sid] && registry[sid].userId === rows[0].accepted_by) {
+						global.io.to(sid).emit('ride_cancelled', { id });
+					}
+				});
+			}
+		});
+		
+		res.json({ ok: true });
 	});
 });
+
+// Process ride payment
+app.post('/api/ride-request/:id/pay', (req, res) => {
+	const { id } = req.params;
+	const { method, amount } = req.body;
+	const token = req.headers['x-auth-token'];
+	
+	if(!token) return res.status(401).send('Unauthorized');
+	
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, r) => {
+		if(err || !r.length) return res.status(401).send('Unauthorized');
+		const user = r[0];
+
+		db.query('SELECT * FROM ride_requests WHERE id=?', [id], (err2, r2) => {
+			if(err2 || !r2.length) return res.status(404).send('Request not found');
+			const ride = r2[0];
+			
+			// Deduct if from wallet, otherwise just mark as paid
+			if(method === 'token' || method === 'wallet'){
+				if (user.wallet_balance < amount) return res.status(400).send('Insufficient balance');
+				db.query('UPDATE users SET wallet_balance = wallet_balance - ? WHERE id=?', [amount, user.id]);
+			}
+			
+			// Log Transaction
+			db.query('INSERT INTO transactions(user_id, amount, type, description) VALUES(?,?,?,?)', 
+				[user.id, amount, 'debit', `Payment for Ride #${id}`]);
+
+			// Update payment status
+			db.query('UPDATE ride_requests SET payment_status="paid", payment_method=? WHERE id=?', [method, id], (err3) => {
+				if(err3) return res.status(500).send(err3);
+				
+				// Optional: Transfer money to driver (if system handles payouts)
+				if (ride.accepted_by) {
+					db.query('UPDATE users SET wallet_balance = wallet_balance + ? WHERE id=?', [amount, ride.accepted_by]);
+				}
+				
+				res.send({ ok: true, message: 'Payment successful' });
+			});
+		});
+	});
+});
+
+// GET driver earnings
+app.get('/api/driver/earnings', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT id FROM users WHERE token=? AND role="driver"', [token], (err, r) => {
+		if(err || !r.length) return res.status(401).send('Unauthorized');
+		const driverUserId = r[0].id;
+		
+		db.query('SELECT SUM(fare) AS total FROM ride_requests WHERE accepted_by=? AND payment_status="paid"', [driverUserId], (err2, r2) => {
+			if(err2) return res.status(500).send(err2);
+			res.send({ earnings: r2[0].total || 0 });
+		});
+	});
+});
+
+// Driver Rating
+app.post('/api/driver/rate', (req, res) => {
+	const { driverId, rating } = req.body;
+	if(!driverId || !rating) return res.status(400).send('Missing');
+	
+	db.query('UPDATE drivers SET rating = (rating + ?) / 2 WHERE user_id=?', [rating, driverId], (err) => {
+		if(err) return res.status(500).send(err);
+		res.send({ ok: true });
+	});
+});
+
+// Generate eSewa HMAC Signature (Production/Live Ready)
+app.post('/api/payment/esewa/signature', (req, res) => {
+  const { amount, transaction_uuid } = req.body;
+  if (!amount || !transaction_uuid) return res.status(400).send("Missing parameters");
+
+  const product_code = process.env.ESEWA_MERCHANT_CODE || "EPAYTEST";
+  const secret_key = process.env.ESEWA_SECRET_KEY || "8gBm/:&EnhH.1/q";
+  const signed_field_names = "total_amount,transaction_uuid,product_code";
+  
+  const message = `total_amount=${amount},transaction_uuid=${transaction_uuid},product_code=${product_code}`;
+  const hash = crypto.createHmac('sha256', secret_key)
+                     .update(message)
+                     .digest('base64');
+                     
+  res.send({
+    signature: hash,
+    signed_field_names,
+    product_code
+  });
+});
+
+// Verify eSewa HMAC Signature from Redirect
+app.post('/api/payment/esewa/verify', (req, res) => {
+  const { data } = req.body;
+  if (!data) return res.status(400).send("No data");
+  try {
+    const decodedStr = Buffer.from(data, 'base64').toString('utf-8');
+    const decodedData = JSON.parse(decodedStr);
+    
+    // eSewa returns signature as well. Recompute to verify.
+    const secret_key = process.env.ESEWA_SECRET_KEY || "8gBm/:&EnhH.1/q";
+    const msg = `transaction_code=${decodedData.transaction_code},status=${decodedData.status},total_amount=${decodedData.total_amount},transaction_uuid=${decodedData.transaction_uuid},product_code=${process.env.ESEWA_MERCHANT_CODE || 'EPAYTEST'},signed_field_names=${decodedData.signed_field_names}`;
+    
+    const hash = crypto.createHmac('sha256', secret_key).update(msg).digest('base64');
+    
+    if (hash === decodedData.signature && decodedData.status === 'COMPLETE') {
+      const txUuid = decodedData.transaction_uuid;
+      
+      // If it's a wallet recharge, update the balance immediately
+      if (txUuid.startsWith('recharge_')) {
+        const parts = txUuid.split('_');
+        const userId = parts[1];
+        const amount = parseFloat(decodedData.total_amount.replace(/,/g, ''));
+        
+        db.query('UPDATE users SET balance = balance + ? WHERE id=?', [amount, userId], (err) => {
+          if (err) console.error('Wallet recharge update failed:', err);
+          else console.log(`Wallet recharged for User ${userId}: +${amount}`);
+        });
+      }
+
+      res.json({ success: true, transaction: decodedData });
+    } else {
+      res.status(400).json({ success: false, error: "Signature mismatch or payment failed" });
+    }
+  } catch(e) {
+    res.status(500).send(e.message);
+  }
+});
+
+
 
 app.post('/api/ride-request/:id/accept', (req,res)=>{
 
@@ -808,10 +1077,13 @@ app.post('/api/ride-request/:id/accept', (req,res)=>{
 		if(err) { console.error('Accept check error:', err); return res.status(500).send(err); }
 		if(!r.length) { console.log('Accept check: token not found'); return res.status(401).send('Unauthorized'); }
 		const driver = r[0];
-		console.log(`Driver accepting: ${driver.email}, Role: ${driver.role}, ID: ${driver.id}`);
-		if(driver.role !== 'driver') {
-			console.log(`Forbidden: role is ${driver.role}`);
-			return res.status(403).send('Forbidden');
+		if(!driver.role || driver.role.toLowerCase() !== 'driver') {
+			console.error(`FORBIDDEN (Accept): User ${driver.id} role mismatch. Role: ${driver.role}`);
+			return res.status(403).send('Forbidden: Driver role required');
+		}
+		if(driver.approval_status !== 'approved') {
+			console.error(`FORBIDDEN (Accept): User ${driver.id} not approved. Status: ${driver.approval_status}`);
+			return res.status(403).send(`Forbidden: Account ${driver.approval_status}`);
 		}
 
 		// use a DB connection and transaction to atomically accept
@@ -836,39 +1108,130 @@ app.post('/api/ride-request/:id/accept', (req,res)=>{
 								// notify patient socket
 								const registry = io.registry || (io.registry = {});
 								conn.query('SELECT user_id FROM ride_requests WHERE id=?',[id], (er2, rr)=>{
-									// release connection after final query
-									conn.release();
-									if(er2) return res.status(200).send({ok:true});
+									if(er2) { conn.release(); return res.status(200).send({ok:true}); }
 									const userId = rr[0].user_id;
 
-									// Find patient socket(s)
-									const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
-									// Find driver socket(s)
-									const driverSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === driver.id);
+									// Fetch patient details (name, phone)
+									conn.query('SELECT name, phone FROM users WHERE id=?', [userId], (pErr, pRes)=>{
+										conn.release(); // release connection after final query
+										const patientName = pRes && pRes[0] ? pRes[0].name : 'Patient';
+										const patientPhone = pRes && pRes[0] ? pRes[0].phone : null;
 
-									patientSids.forEach(sid => {
-										io.to(sid).emit('ride_accepted', { driverId: driver.id, driverName: driver.name });
-									});
+										// Find patient socket(s)
+										const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
+										// Find driver socket(s)
+										const driverSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === driver.id);
 
-									driverSids.forEach(sid => {
-										io.to(sid).emit('ride_confirmed', { 
-											id: id,
-											patientSocketId: patientSids[0] || null,
-											patientId: userId
+										patientSids.forEach(sid => {
+											io.to(sid).emit('ride_accepted', { 
+												driverId: driver.id, 
+												driverName: driver.name,
+												driverPhone: driver.phone
+											});
 										});
+										
+										// Send SMS to patient about ride acceptance
+										if (patientPhone) {
+											sendSMS(patientPhone, `AmbuTrack: Your ambulance has been dispatched. Driver ${driver.name || ''} is on the way.`);
+										}
+
+										driverSids.forEach(sid => {
+											io.to(sid).emit('ride_confirmed', { 
+												id: id,
+												patientSocketId: patientSids[0] || null,
+												patientId: userId,
+												patientName: patientName,
+												patientPhone: patientPhone
+											});
+										});
+
+										// Notify all drivers that this request is no longer available
+										// so they can remove it from their pending lists immediately.
+										io.emit('ride_cancelled', { id });
+
+										res.send({ ok:true });
+										// Trigger Notification for Patient
+										triggerNotification(userId, 'TRIP_ACCEPTED', `Your ambulance request has been accepted by ${driver.name}.`);
 									});
-
-									// Notify all drivers that this request is no longer available
-									// so they can remove it from their pending lists immediately.
-									io.emit('ride_cancelled', { id });
-
-									res.send({ ok:true });
 								});
 							});
 						});
 					});
 				});
 			});
+		});
+	});
+});
+
+app.post('/api/ride-request/:id/start-with-otp', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	const id = req.params.id;
+	const { otp } = req.body;
+	
+	if(!token) return res.status(401).send('Unauthorized');
+	
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, r) => {
+		if(err || !r.length) return res.status(401).send('Unauthorized');
+		const driver = r[0];
+		if(driver.role !== 'driver') return res.status(403).send('Forbidden');
+
+		db.query('SELECT * FROM ride_requests WHERE id=? AND accepted_by=? AND status IN ("accepted", "arrived")', [id, driver.id], (er, rows) => {
+			if(er) return res.status(500).send(er);
+			if(!rows.length) return res.status(404).send('Active trip not found or incorrect state');
+			
+			const ride = rows[0];
+			if(ride.otp && ride.otp !== otp) {
+				return res.status(400).send('Invalid OTP');
+			}
+			
+			db.query('UPDATE ride_requests SET status="started" WHERE id=?', [id], (uEr) => {
+				if(uEr) return res.status(500).send(uEr);
+				
+				// Update Trip status if it exists
+				db.query("UPDATE trips SET status='started', started_at=NOW() WHERE status!='completed' AND driver_id=(SELECT id FROM drivers WHERE user_id=?)", [driver.id]);
+
+				// Notify patient
+				const registry = io.registry || {};
+				const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === ride.user_id);
+				patientSids.forEach(sid => {
+					io.to(sid).emit('ride_started', { id });
+				});
+
+				res.send({ ok: true });
+			});
+		});
+	});
+});
+
+// --- WALLET ENHANCEMENTS ---
+app.get('/api/wallet/history', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, users) => {
+		if(err || !users.length) return res.status(401).send('Unauthorized');
+		const user = users[0];
+		db.query('SELECT * FROM transactions WHERE user_id=? ORDER BY created_at DESC LIMIT 50', [user.id], (e, rows) => {
+			if(e) return res.status(500).send(e);
+			res.json(rows);
+		});
+	});
+});
+
+app.post('/api/wallet/topup', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	const { amount, method, description } = req.body;
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT * FROM users WHERE token=?', [token], (err, users) => {
+		if(err || !users.length) return res.status(401).send('Unauthorized');
+		const user = users[0];
+		const amt = parseFloat(amount);
+		if(isNaN(amt) || amt <= 0) return res.status(400).send('Invalid amount');
+
+		db.query('UPDATE users SET wallet_balance = wallet_balance + ? WHERE id=?', [amt, user.id], (updErr) => {
+			if(updErr) return res.status(500).send(updErr);
+			db.query('INSERT INTO transactions(user_id, amount, type, description) VALUES(?,?,?,?)', 
+				[user.id, amt, 'credit', description || `Top-up via ${method || 'eSewa'}`]);
+			res.json({ ok:true, newBalance: parseFloat(user.wallet_balance) + amt });
 		});
 	});
 });
@@ -1038,6 +1401,7 @@ res.send("Added")
 
 
 /* Socket */
+const disconnectTimers = new Map(); // For location stability grace period
 
 io.on("connection",(socket)=>{
 	console.log("User Connected")
@@ -1067,7 +1431,18 @@ io.on("connection",(socket)=>{
 		try{
 			if(info && info.token){
 				db.query('SELECT * FROM users WHERE token=?',[info.token], (err, r)=>{
-					if(!err && r && r.length){ const u = r[0]; registry[socket.id] = { name: u.name, role: u.role, userId: u.id }; socket.emit('identified', { ok:true, role: u.role }); }
+					if(!err && r && r.length){ 
+						const u = r[0]; 
+						registry[socket.id] = { name: u.name, role: u.role, userId: u.id }; 
+						socket.emit('identified', { ok:true, role: u.role }); 
+						
+						// Clear any pending disconnect timer for this user
+						if (disconnectTimers.has(u.id)) {
+							clearTimeout(disconnectTimers.get(u.id));
+							disconnectTimers.delete(u.id);
+							console.log(`Grace period cleared for ${u.name}`);
+						}
+					}
 				});
 			}else{
 				registry[socket.id] = { name: info?.name || 'unknown', role: info?.role || 'guest' };
@@ -1116,8 +1491,18 @@ socket.on('disconnect', () => {
 	try {
 		const info = registry[socket.id];
 		if (info && info.role === 'driver' && info.userId) {
-			db.query('UPDATE drivers SET status=? WHERE user_id=?', ['offline', info.userId]);
-			io.emit('driver_offline', { driverId: info.userId, userId: info.userId });
+			console.log(`Driver disconnected (grace period started): ${info.userId}`);
+			
+			// Start a 10s grace period before marking offline
+			const timerId = setTimeout(() => {
+				db.query('UPDATE drivers SET status=? WHERE user_id=?', ['offline', info.userId], (err) => {
+					if(!err) io.emit('driver_offline', { driverId: info.userId, userId: info.userId });
+				});
+				disconnectTimers.delete(info.userId);
+				console.log(`Driver ${info.userId} marked offline after grace period.`);
+			}, 10000);
+			
+			disconnectTimers.set(info.userId, timerId);
 		}
 		delete registry[socket.id];
 	} catch(e) {}
@@ -1226,9 +1611,7 @@ socket.on('pair_location', payload => {
 	}
 });
 
-socket.on('disconnect', ()=>{
-	delete registry[socket.id];
-});
+// Redundant disconnect listener removed
 
 })
 
@@ -1349,6 +1732,66 @@ app.get('/api/patient/trip-history', (req, res) => {
 			}
 		);
 	});
+});
+
+// ── Support Contact Form ────────────────────────────────────────────────────
+// Initialize Notifications Table
+db.query(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    type VARCHAR(50),
+    message TEXT,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`, (err) => {
+  if (err) console.error("Error creating notifications table:", err);
+  else console.log("Notifications table ready");
+});
+
+// Helper to trigger a notification
+const triggerNotification = (userId, type, message) => {
+  db.query('INSERT INTO notifications (user_id, type, message) VALUES (?, ?, ?)', [userId, type, message], (err, res) => {
+    if (err) console.error("Trigger notification error:", err);
+    else {
+      // Emit via socket if user is online
+      const registry = io.registry || {};
+      const sids = Object.keys(registry).filter(sid => registry[sid].userId === userId);
+      sids.forEach(sid => {
+        io.to(sid).emit('new_notification', { id: res.insertId, type, message, created_at: new Date() });
+      });
+    }
+  });
+};
+
+// GET all notifications for a user
+app.get('/api/notifications', (req, res) => {
+  const token = req.headers['x-auth-token'];
+  if (!token) return res.status(401).send('Unauthorized');
+  db.query('SELECT id FROM users WHERE token=?', [token], (err, r) => {
+    if (err || !r.length) return res.status(401).send('Unauthorized');
+    const userId = r[0].id;
+    db.query('SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50', [userId], (e, rows) => {
+      if (e) return res.status(500).send(e);
+      res.send(rows);
+    });
+  });
+});
+
+// MARK notification as read
+app.put('/api/notifications/:id/read', (req, res) => {
+  const token = req.headers['x-auth-token'];
+  const { id } = req.params;
+  if (!token) return res.status(401).send('Unauthorized');
+  db.query('SELECT id FROM users WHERE token=?', [token], (err, r) => {
+    if (err || !r.length) return res.status(401).send('Unauthorized');
+    db.query('UPDATE notifications SET is_read=TRUE WHERE id=? AND user_id=?', [id, r[0].id], (e) => {
+      if (e) return res.status(500).send(e);
+      res.send({ ok: true });
+    });
+  });
 });
 
 // ── Support Contact Form ────────────────────────────────────────────────────

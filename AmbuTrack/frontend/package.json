@@ -10,17 +10,24 @@
   "dependencies": {
     "@react-google-maps/api": "^2.19.0",
     "axios": "^1.6.0",
+    "i18next": "^25.10.9",
     "leaflet": "^1.9.4",
     "leaflet-routing-machine": "^3.2.12",
     "lucide-react": "^0.577.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-i18next": "^16.6.6",
     "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.22.0",
     "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-react": "^4.0.0",
+    "eslint": "^10.1.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
     "puppeteer": "^24.40.0",
     "vite": "^5.0.0"
   }

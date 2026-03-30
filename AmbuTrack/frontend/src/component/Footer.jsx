@@ -23,10 +23,10 @@ export default function Footer() {
               Providing fast, reliable, and life-saving ambulance tracking services across the region. Your safety is our priority.
             </p>
             <div style={socialLinksStyle}>
-              <a href="#" style={socialIconStyle}><Facebook size={18} /></a>
-              <a href="#" style={socialIconStyle}><Twitter size={18} /></a>
-              <a href="#" style={socialIconStyle}><Instagram size={18} /></a>
-              <a href="#" style={socialIconStyle}><Linkedin size={18} /></a>
+              <a href="https://facebook.com/ambutrack" target="_blank" rel="noopener noreferrer" style={socialIconStyle}><Facebook size={18} /></a>
+              <a href="https://twitter.com/ambutrack" target="_blank" rel="noopener noreferrer" style={socialIconStyle}><Twitter size={18} /></a>
+              <a href="https://instagram.com/ambutrack" target="_blank" rel="noopener noreferrer" style={socialIconStyle}><Instagram size={18} /></a>
+              <a href="https://linkedin.com/company/ambutrack" target="_blank" rel="noopener noreferrer" style={socialIconStyle}><Linkedin size={18} /></a>
             </div>
           </div>
 
@@ -41,7 +41,7 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Legal */}
+          {/* Company */}
           <div style={sectionStyle}>
             <h3 style={sectionHeaderStyle}>Company</h3>
             <ul style={listStyle}>
@@ -57,7 +57,7 @@ export default function Footer() {
             <h3 style={sectionHeaderStyle}>Contact Us</h3>
             <div style={contactItemStyle}>
               <Mail size={16} color="#ef4444" />
-              <span style={contactTextStyle}>support@ambutrack.com</span>
+              <span style={contactTextStyle}>info@ambutrack.com</span>
             </div>
             <div style={contactItemStyle}>
               <Phone size={16} color="#ef4444" />
@@ -65,7 +65,7 @@ export default function Footer() {
             </div>
             <div style={contactItemStyle}>
               <MapPin size={16} color="#ef4444" />
-              <span style={contactTextStyle}>123 Rescue Way, Med City, NY</span>
+              <span style={contactTextStyle}>Itahari, Sunsari</span>
             </div>
           </div>
         </div>
@@ -87,23 +87,23 @@ export default function Footer() {
 const footerStyle = {
   background: '#1e293b',
   color: '#cbd5e1',
-  padding: '80px 0 40px 0',
+  padding: '12px 0 8px 0',
   fontFamily: 'Inter, sans-serif',
   position: 'relative',
   zIndex: 10,
 };
 
 const containerStyle = {
-  maxWidth: '1200px',
+  maxWidth: 'var(--container-max)',
   margin: '0 auto',
-  padding: '0 40px',
+  padding: '0 var(--container-padding)',
 };
 
 const gridStyle = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-  gap: '40px',
-  marginBottom: '60px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gap: '12px',
+  marginBottom: '16px',
 };
 
 const sectionStyle = {
@@ -134,17 +134,17 @@ const logoIconStyle = {
 
 const brandTextStyle = {
   margin: 0,
-  fontSize: '1.25rem',
+  fontSize: '1.0rem',
   fontWeight: 900,
   color: '#fff',
   letterSpacing: '-0.04em',
 };
 
 const descriptionStyle = {
-  fontSize: '0.9rem',
-  lineHeight: '1.6',
+  fontSize: '0.78rem',
+  lineHeight: '1.4',
   color: '#94a3b8',
-  maxWidth: '280px',
+  maxWidth: '240px',
 };
 
 const socialLinksStyle = {
@@ -168,10 +168,10 @@ const socialIconStyle = {
 };
 
 const sectionHeaderStyle = {
-  fontSize: '1rem',
+  fontSize: '0.82rem',
   fontWeight: 700,
   color: '#fff',
-  marginBottom: '10px',
+  marginBottom: '4px',
   position: 'relative',
 };
 
@@ -187,11 +187,11 @@ const listStyle = {
 const linkStyle = {
   color: '#94a3b8',
   textDecoration: 'none',
-  fontSize: '0.9rem',
-  transition: 'color 0.2s',
-  '&:hover': {
-    color: '#fff',
-  },
+  fontSize: '0.78rem',
+  fontWeight: 500,
+  transition: 'all 0.2s ease',
+  display: 'block',
+  padding: '2px 0',
 };
 
 const contactItemStyle = {
@@ -206,13 +206,13 @@ const contactTextStyle = {
 };
 
 const bottomBarStyle = {
-  paddingTop: '30px',
-  borderTop: '1px solid rgba(255,255,255,0.1)',
+  borderTop: '1px solid #334155',
+  paddingTop: '8px',
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
-  flexWrap: 'wrap',
-  gap: '20px',
+  fontSize: '0.72rem',
+  color: '#64748b',
 };
 
 const copyrightStyle = {

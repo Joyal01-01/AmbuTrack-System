@@ -1,6 +1,6 @@
-// src/component/Chatbot.jsx — Powered by Google Gemini AI
 import { useState, useRef, useEffect } from "react";
 import { MessageCircle, X, Send, HelpCircle, ChevronRight, AlertCircle } from "lucide-react";
+import api from "../api";
 import "./Chatbot.css";
 
 const QUICK_ACTIONS = {
@@ -27,14 +27,13 @@ export default function Chatbot({ role = "patient" }) {
       from: "bot",
       text:
         role === "driver"
-          ? "Hi! 👋 I'm AmbuBot, your AI assistant. I can help you manage rides, earnings, and more. What do you need help with?"
-          : "Hi! 👋 I'm AmbuBot, your AI assistant. I can help you book ambulances, track rides, find hospitals, and more. How can I help?",
+          ? "Hi! 👋 I'm AmbuBot, your assistant. I can help you manage rides, earnings, and more. What do you need help with?"
+          : "Hi! 👋 I'm AmbuBot, your assistant. I can help you book ambulances, track rides, find hospitals, and more. How can I help?",
     },
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState(null);
-  // Keep conversation history for multi-turn context (exclude the initial greeting from history)
   const historyRef = useRef([]);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -57,24 +56,14 @@ export default function Chatbot({ role = "patient" }) {
     setIsTyping(true);
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: msg,
-          role,
-          history: historyRef.current,
-        }),
+      const res = await api.post("/api/chat", {
+        message: msg,
+        role,
+        history: historyRef.current,
       });
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Server error ${response.status}`);
-      }
+      const { reply } = res.data;
 
-      const { reply } = await response.json();
-
-      // Append to local history for multi-turn continuity
       historyRef.current = [
         ...historyRef.current,
         { from: "user", text: msg },
@@ -82,15 +71,14 @@ export default function Chatbot({ role = "patient" }) {
       ];
 
       setMessages((prev) => [...prev, { from: "bot", text: reply }]);
-    } catch (err) {
-      console.error("Chatbot error:", err);
-      setError(err.message || "Something went wrong. Please try again.");
+    } catch {
+      const fallbackReply = msg.toLowerCase().includes('emergency') || msg.toLowerCase().includes('urgent')
+        ? "🚨 **EMERGENCY**: If this is life-threatening, please call **102** (Ambulance), **100** (Police), or **101** (Fire) immediately!"
+        : "👋 I'm AmbuBot! Something went wrong on my end. Please try one of the quick actions below.";
+        
       setMessages((prev) => [
         ...prev,
-        {
-          from: "bot",
-          text: "⚠️ Sorry, I couldn't get a response right now. Please check your connection and try again.",
-        },
+        { from: "bot", text: fallbackReply },
       ]);
     } finally {
       setIsTyping(false);
@@ -133,9 +121,9 @@ export default function Chatbot({ role = "patient" }) {
                 <HelpCircle size={18} />
               </div>
               <div>
-                <div className="chatbot-header-title">AmbuBot AI</div>
+                <div className="chatbot-header-title">AmbuBot Support</div>
                 <div className="chatbot-header-status">
-                  <span className="chatbot-online-dot"></span> Powered by Gemini
+                  <span className="chatbot-online-dot"></span> Online
                 </div>
               </div>
             </div>

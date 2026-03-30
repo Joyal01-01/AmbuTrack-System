@@ -3,8 +3,10 @@ import { socket } from "../socket";
 import api from "../api";
 import { Link } from 'react-router-dom';
 import { Mail, Lock, ArrowRight, Activity, ShieldCheck, Smartphone } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export default function Login() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorStr, setErrorStr] = useState("");
@@ -105,10 +107,10 @@ export default function Login() {
             {showOtp ? <ShieldCheck size={24} strokeWidth={2.5} /> : <Activity size={24} strokeWidth={2.5} />}
           </div>
           <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#0f172a', fontWeight: 800 }}>
-            {showOtp ? 'Two-Step Verification' : 'Welcome Back'}
+            {showOtp ? t('login_2fa') : t('login_welcome')}
           </h2>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '0.85rem' }}>
-            {showOtp ? `We've sent a 6-digit code to ${tempEmail}` : 'Enter your credentials to access AmbuTrack'}
+            {showOtp ? `${t('login_2fa_subtitle')}${tempEmail}` : t('login_subtitle')}
           </p>
         </div>
 
@@ -123,7 +125,7 @@ export default function Login() {
         {!showOtp ? (
           <form onSubmit={handleLogin} style={{ padding: '0 32px 32px' }}>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>Email Address</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>{t('login_email')}</label>
               <div style={{ position: 'relative' }}>
                 <Mail size={16} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 12 }} />
                 <input
@@ -145,8 +147,8 @@ export default function Login() {
 
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>Password</label>
-                <Link to="/forgot-password" style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', textDecoration: 'none' }}>Forgot password?</Link>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>{t('login_password')}</label>
+                <Link to="/forgot-password" style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444', textDecoration: 'none' }}>{t('login_forgot')}</Link>
               </div>
               <div style={{ position: 'relative' }}>
                 <Lock size={16} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 12 }} />
@@ -178,20 +180,20 @@ export default function Login() {
                 boxShadow: '0 4px 6px -1px rgba(239, 68, 68, 0.2)'
               }}
             >
-              {loading ? 'Signing in...' : (
-                <>Sign in to Dashboard <ArrowRight size={16} /></>
+              {loading ? t('login_btn_loading') : (
+                <>{t('login_btn')} <ArrowRight size={16} /></>
               )}
             </button>
           </form>
         ) : (
           <form onSubmit={handleVerifyOtp} style={{ padding: '0 32px 32px' }}>
             <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>One-Time Code</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#475569', marginBottom: 6 }}>{t('login_otp_label')}</label>
               <div style={{ position: 'relative' }}>
                 <Smartphone size={16} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 12 }} />
                 <input
                   type="text"
-                  placeholder="Enter 6-digit code"
+                  placeholder={t('login_otp_placeholder')}
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
                   style={{
@@ -218,8 +220,8 @@ export default function Login() {
                 boxShadow: '0 4px 6px -1px rgba(16, 185, 129, 0.2)'
               }}
             >
-              {loading ? 'Verifying...' : (
-                <>Verify Account <ArrowRight size={16} /></>
+              {loading ? t('loading') : (
+                <>{t('login_verify_btn')} <ArrowRight size={16} /></>
               )}
             </button>
             <button
@@ -227,16 +229,16 @@ export default function Login() {
                onClick={() => setShowOtp(false)}
                style={{ width: '100%', marginTop: 12, background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 500 }}
             >
-               Back to Login
+               {t('login_back_btn')}
             </button>
           </form>
         )}
 
         {/* Footer Section */}
         <div style={{ padding: '20px 32px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
-          <span style={{ fontSize: '0.85rem', color: '#64748b' }}>Don't have an account? </span>
+          <span style={{ fontSize: '0.85rem', color: '#64748b' }}>{t('login_no_acc')} </span>
           <Link to="/register" style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ef4444', textDecoration: 'none' }}>
-            Create one now
+            {t('login_create_acc')}
           </Link>
         </div>
 

@@ -5,8 +5,10 @@ import {
   User, Mail, Lock, ShieldCheck, ArrowRight, Activity, Send, Phone, MapPin, 
   Truck, Calendar, CreditCard, FileText, Upload, Wallet 
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export default function Register() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
@@ -89,8 +91,8 @@ export default function Register() {
       const res = await api.post("/api/register", formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      alert(res?.data?.message || 'Registered Successfully — you can now log in.');
-      navigate("/login");
+      setSuccessStr(res?.data?.message || 'Registered Successfully — you can now log in.');
+      setTimeout(() => navigate("/login"), 2000);
     } catch (err) {
       const msg = err?.response?.data || err.message || 'Registration failed';
       setErrorStr(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -123,8 +125,8 @@ export default function Register() {
           }}>
             <ShieldCheck size={28} />
           </div>
-          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>Create AmbuTrack Account</h2>
-          <p style={{ margin: '8px 0 0', opacity: 0.9, fontSize: '0.9rem' }}>Fast, reliable ambulance services at your fingertips</p>
+          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>{t('reg_title')}</h2>
+          <p style={{ margin: '8px 0 0', opacity: 0.9, fontSize: '0.9rem' }}>{t('reg_subtitle')}</p>
         </div>
 
         {errorStr && (
@@ -140,7 +142,7 @@ export default function Register() {
 
         <form onSubmit={register} style={{ padding: '24px 32px 32px' }}>
           <div style={{ marginBottom: 20 }}>
-            <label style={labelStyle}>I am a...</label>
+            <label style={labelStyle}>{t('reg_role_prompt')}</label>
             <div style={{ display: 'flex', gap: 12 }}>
               <button 
                 type="button" 
@@ -152,7 +154,7 @@ export default function Register() {
                   color: role === 'patient' ? '#4f46e5' : '#64748b',
                   fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s'
                 }}
-              >Patient</button>
+              >{t('reg_role_patient')}</button>
               <button 
                 type="button" 
                 onClick={() => setRole('driver')}
@@ -163,14 +165,14 @@ export default function Register() {
                   color: role === 'driver' ? '#4f46e5' : '#64748b',
                   fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s'
                 }}
-              >Driver</button>
+              >{t('reg_role_driver')}</button>
             </div>
           </div>
 
           <div style={{ display: 'grid', gap: 16 }}>
             {/* Common Fields */}
             <div>
-              <label style={labelStyle}>Full Name</label>
+              <label style={labelStyle}>{t('reg_fullname')}</label>
               <div style={{ position: 'relative' }}>
                 <User size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
                 <input type="text" placeholder="John Doe" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
@@ -178,7 +180,7 @@ export default function Register() {
             </div>
 
             <div>
-              <label style={labelStyle}>Email Address</label>
+              <label style={labelStyle}>{t('reg_email')}</label>
               <div style={{ position: 'relative' }}>
                 <Mail size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
                 <input type="email" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
@@ -186,7 +188,7 @@ export default function Register() {
             </div>
 
             <div>
-              <label style={labelStyle}>Phone Number</label>
+              <label style={labelStyle}>{t('reg_phone')}</label>
               <div style={{ position: 'relative' }}>
                 <Phone size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
                 <input type="text" placeholder="+977-XXXXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
@@ -195,20 +197,20 @@ export default function Register() {
 
             {/* OTP Section */}
             <div>
-              <label style={labelStyle}>Verify Email (OTP)</label>
+              <label style={labelStyle}>{t('reg_otp')}</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ position: 'relative', flex: 1 }}>
                   <ShieldCheck size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
-                  <input type="text" placeholder="6-digit OTP" value={otp} onChange={(e) => setOtp(e.target.value)} style={{...inputStyle, background: '#f8fafc'}} />
+                  <input type="text" placeholder={t('reg_otp_placeholder')} value={otp} onChange={(e) => setOtp(e.target.value)} style={{...inputStyle, background: '#f8fafc'}} />
                 </div>
                 <button type="button" onClick={sendOtp} disabled={sending} style={{
                   padding: '0 16px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer'
-                }}>{sending ? '...' : (otpSent ? 'Resend' : 'Send')}</button>
+                }}>{sending ? '...' : (otpSent ? t('reg_otp_resend') : t('reg_otp_send'))}</button>
               </div>
             </div>
 
             <div>
-              <label style={labelStyle}>Password</label>
+              <label style={labelStyle}>{t('reg_pass')}</label>
               <div style={{ position: 'relative' }}>
                 <Lock size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
                 <input type="password" placeholder="Min 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
@@ -217,7 +219,7 @@ export default function Register() {
 
             {/* Address */}
             <div>
-              <label style={labelStyle}>Permanent Address</label>
+              <label style={labelStyle}>{t('reg_address')}</label>
               <div style={{ position: 'relative' }}>
                 <MapPin size={18} color="#94a3b8" style={{ position: 'absolute', left: 14, top: 11 }} />
                 <input type="text" placeholder="City, Ward No, Street" value={address} onChange={(e) => setAddress(e.target.value)} style={inputStyle} />
@@ -313,13 +315,13 @@ export default function Register() {
               boxShadow: '0 10px 15px -3px rgba(79, 70, 229, 0.4)'
             }}
           >
-            {registering ? 'Creating Account...' : <>{role === 'driver' ? 'Apply for Verification' : 'Register Now'} <ArrowRight size={20} /></>}
+            {registering ? t('reg_btn_loading') : <>{role === 'driver' ? t('reg_btn_driver') : t('reg_btn_patient')} <ArrowRight size={20} /></>}
           </button>
         </form>
 
         <div style={{ padding: '24px 32px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
-          <span style={{ fontSize: '0.9rem', color: '#64748b' }}>Already have an account? </span>
-          <Link to="/login" style={{ fontSize: '0.9rem', fontWeight: 700, color: '#4f46e5', textDecoration: 'none' }}>Sign in</Link>
+          <span style={{ fontSize: '0.9rem', color: '#64748b' }}>{t('reg_have_acc')} </span>
+          <Link to="/login" style={{ fontSize: '0.9rem', fontWeight: 700, color: '#4f46e5', textDecoration: 'none' }}>{t('reg_login_link')}</Link>
         </div>
       </div>
     </div>

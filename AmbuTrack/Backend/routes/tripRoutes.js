@@ -152,22 +152,48 @@ res.json({message:"Trip Started"});
 
 });
 
-router.post("/complete",(req,res)=>{
+router.post("/complete", (req, res) => {
+  const { tripId, driverId } = req.body;
 
-const {tripId,driverId}=req.body;
+  // 1. Fetch trip and driver details to calculate fare
+  db.query(
+    `SELECT t.*, u.base_fare, u.per_km_rate 
+     FROM trips t 
+     JOIN drivers d ON t.driver_id = d.id 
+     JOIN users u ON d.user_id = u.id 
+     WHERE t.id = ?`,
+    [tripId],
+    (err, rows) => {
+      if (err || !rows.length) return res.status(500).json({ error: "Trip not found" });
+      const trip = rows[0];
+      const base = trip.base_fare || 500;
+      const rate = trip.per_km_rate || 50;
+      
+      // Mock distance for now if not tracked (e.g. 5km default or use logic)
+      const distance = trip.distance_km || (Math.random() * 10 + 2).toFixed(1); 
+      const fare = base + (distance * rate);
 
-db.query(
-"UPDATE trips SET status='completed' WHERE id=?",
-[tripId]
-);
+      // 2. Update trip with fare and status
+      db.query(
+        "UPDATE trips SET status='completed', fare=?, distance_km=?, completed_at=NOW() WHERE id=?",
+        [fare, distance, tripId],
+        (err2) => {
+          if (err2) console.error(err2);
+          
+          // 3. Update driver status
+          db.query(
+            "UPDATE drivers SET status='online', completed_trips = completed_trips + 1 WHERE id=?",
+            [driverId]
+          );
 
-db.query(
-"UPDATE drivers SET status='online', completed_trips = completed_trips + 1 WHERE id=?",
-[driverId]
-);
+          // 4. Update the ride_requests table if it was used
+          db.query("UPDATE ride_requests SET status='completed', fare=?, distance_km=? WHERE accepted_by=(SELECT user_id FROM drivers WHERE id=?) AND status='started'", [fare, distance, driverId]);
 
-res.json({message:"Trip Completed"});
-
+          res.json({ message: "Trip Completed", fare, distance });
+        }
+      );
+    }
+  );
 });
 
 export default router;

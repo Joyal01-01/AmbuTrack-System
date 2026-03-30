@@ -1,0 +1,4 @@
+trips:
+id, originLat, originLng, destLat, destLng, status, createdAt, updatedAt, UserId, AmbulanceId, destination_lat, destination_lng, distance_km, fare
+ride_requests:
+id, user_id, lat, lng, status, accepted_by, created_at, name, requested_driver_id, payment_method, payment_status, medical_note, otp
