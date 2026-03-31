@@ -1225,10 +1225,11 @@ app.post('/api/ride-request/:id/start-with-otp', (req, res) => {
 app.post('/api/ride-request/:id/destination', (req, res) => {
 	const token = req.headers['x-auth-token'];
 	const id = req.params.id;
-	const { lat, lng } = req.body;
+	const { lat, lng, name } = req.body;
 	
 	if(!token) return res.status(401).send('Unauthorized');
 	if(!lat || !lng) return res.status(400).send('Missing coordinates');
+	const hName = name || 'Hospital';
 
 	db.query('SELECT * FROM users WHERE token=?', [token], (err, r) => {
 		if(err || !r.length) return res.status(401).send('Unauthorized');
@@ -1253,7 +1254,7 @@ app.post('/api/ride-request/:id/destination', (req, res) => {
 					const registry = io.registry || {};
 					const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
 					patientSids.forEach(sid => {
-						io.to(sid).emit('ride_destination_updated', { id, lat, lng });
+						io.to(sid).emit('ride_destination_updated', { id, lat: dLat, lng: dLng, name: hName });
 					});
 				}
 			});

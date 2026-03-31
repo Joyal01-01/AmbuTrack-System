@@ -68,37 +68,55 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Custom Route Component
-function RoutingControl({ start, end }) {
+// Custom Route Component with persistent instance
+function RoutingControl({ start, end, color = "#ef4444" }) {
   const map = useMap();
+  const routingRef = useRef(null);
 
   useEffect(() => {
-    if (!start || !end || !start.lat || !end.lat) return;
+    if (!map || !start || !end || !start.lat || !end.lat) return;
 
     try {
-      const routingControl = L.Routing.control({
-        waypoints: [
-          L.latLng(start.lat, start.lng),
-          L.latLng(end.lat, end.lng)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        show: false,
-        createMarker: () => null,
-        lineOptions: {
-          styles: [{ color: "#ef4444", weight: 6 }]
-        }
-      }).addTo(map);
+      const waypoints = [
+        L.latLng(parseFloat(start.lat), parseFloat(start.lng)),
+        L.latLng(parseFloat(end.lat), parseFloat(end.lng))
+      ];
 
-      return () => {
-        try { map.removeControl(routingControl); } catch (e) { console.error('Error removing routing control', e); }
-      };
+      if (routingRef.current) {
+        // Update waypoints directly without recreating the whole control
+        routingRef.current.setWaypoints(waypoints);
+      } else {
+        // Initial creation
+        routingRef.current = L.Routing.control({
+          waypoints,
+          routeWhileDragging: false,
+          addWaypoints: false,
+          fitSelectedRoutes: false,
+          showAlternatives: false,
+          show: false,
+          createMarker: () => null,
+          lineOptions: {
+            styles: [{ color, weight: 6, opacity: 0.8 }]
+          }
+        }).addTo(map);
+      }
     } catch (e) {
-      console.error('Error initializing routing control', e);
+      console.error('Routing error:', e);
     }
-  }, [map, start, end]);
+
+    return () => {
+      // Logic for cleanup handled by parent if needed, but normally handled on unmount
+    };
+  }, [map, start.lat, start.lng, end.lat, end.lng, color]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle unmount cleanup separately to be safe
+  useEffect(() => {
+    return () => {
+      if (routingRef.current && map) {
+        try { map.removeControl(routingRef.current); } catch { /* ignore */ }
+      }
+    };
+  }, [map]);
 
   return null;
 }
@@ -226,6 +244,12 @@ export default function PatientDashboard() {
       setSelectedDriver(prev => (prev && (prev.driver_user_id === offlineId || prev.driver_id === offlineId)) ? null : prev);
     });
 
+    socket.on('ride_destination_updated', (data) => {
+      console.log("Real-time destination update:", data);
+      setSelectedHospital({ lat: data.lat, lng: data.lng, name: data.name });
+      showToast(`Driver set destination to ${data.name}`);
+    });
+
     fetchDrivers(u.token);
     // Poll drivers every 15s
     const pollId = setInterval(() => fetchDrivers(u.token), 15000);
@@ -273,6 +297,7 @@ export default function PatientDashboard() {
       socket.off('trip_completed');
       socket.off('driver_location_update');
       socket.off('driver_offline');
+      socket.off('ride_destination_updated');
       clearInterval(pollId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -853,16 +878,22 @@ export default function PatientDashboard() {
               {activeAmbulances.map(a => (<Marker key={a.driver_id || a.driver_user_id} position={[a.lat, a.lng]} icon={driverIcon} eventHandlers={{ click: () => { if (requestStatus === 'idle') setSelectedDriver(a); } }}><Popup><strong>{a.name}</strong><br />{a.vehicle_name || 'Ambulance'}<br />★ {a.rating || '5.0'}</Popup></Marker>))}
               
               {/* Routing Logic */}
-              {['accepted', 'arrived'].includes(requestStatus) && selectedDriver && (
+              {/* Stable Routing Logic */}
+              {['accepted', 'arrived'].includes(requestStatus) && selectedDriver && myLocation && (
                 <RoutingControl 
                   start={{ lat: selectedDriver.lat, lng: selectedDriver.lng }} 
                   end={myLocation} 
+                  color="#3b82f6" /* Blue for pickup */
                 />
               )}
-              {requestStatus === 'started' && nearbyHospitals.length > 0 && (
+              {requestStatus === 'started' && myLocation && (selectedHospital || nearbyHospitals[0]) && (
                 <RoutingControl 
                   start={myLocation} 
-                  end={{ lat: nearbyHospitals[0].lat, lng: nearbyHospitals[0].lng }} 
+                  end={{ 
+                    lat: selectedHospital ? selectedHospital.lat : nearbyHospitals[0].lat, 
+                    lng: selectedHospital ? selectedHospital.lng : nearbyHospitals[0].lng 
+                  }} 
+                  color="#10b981" /* Green for hospital travel */
                 />
               )}
 

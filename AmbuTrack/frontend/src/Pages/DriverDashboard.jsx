@@ -92,37 +92,41 @@ function RoutingControl({ start, end, color = "#3b82f6" }) {
   useEffect(() => {
     if (!start || !end || !start.lat || !end.lat) return;
     
-    // Clear existing route if it exists
-    if (routingControlRef.current) {
-      try { map.removeControl(routingControlRef.current); } catch { /* ignore */ }
-    }
+    if (!map || !start || !end || !start.lat || !end.lat) return;
 
     try {
-      routingControlRef.current = L.Routing.control({
-        waypoints: [
-          L.latLng(start.lat, start.lng),
-          L.latLng(end.lat, end.lng)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        show: false,
-        createMarker: () => null,
-        lineOptions: {
-          styles: [{ color, weight: 6, opacity: 0.8 }]
-        }
-      }).addTo(map);
+      const waypoints = [
+        L.latLng(parseFloat(start.lat), parseFloat(start.lng)),
+        L.latLng(parseFloat(end.lat), parseFloat(end.lng))
+      ];
 
-      return () => {
-        if (routingControlRef.current) {
-          try { map.removeControl(routingControlRef.current); routingControlRef.current = null; } catch { /* ignore */ }
-        }
-      };
+      if (routingControlRef.current) {
+        // Update existing instance instead of recreating it
+        routingControlRef.current.setWaypoints(waypoints);
+      } else {
+        // Initialize new instance
+        routingControlRef.current = L.Routing.control({
+          waypoints,
+          routeWhileDragging: false,
+          addWaypoints: false,
+          fitSelectedRoutes: false, // Don't snap zoom every frame
+          showAlternatives: false,
+          show: false,
+          createMarker: () => null,
+          lineOptions: {
+            styles: [{ color, weight: 6, opacity: 0.8 }]
+          }
+        }).addTo(map);
+      }
     } catch(e) {
       console.error("Routing error:", e);
     }
-  }, [map, start, end, color]);
+
+    return () => {
+      // We only remove on cleanup if needed, but for stability we keep it across renders
+      // unless the component unmounts entirely.
+    };
+  }, [map, start.lat, start.lng, end.lat, end.lng, color]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return null;
 }
@@ -468,20 +472,23 @@ export default function DriverDashboard() {
     }
   }
 
-  async function setDestination(h) {
+  const setDestination = async (h) => {
     if (!activeTrip || activeTrip.status !== 'started') {
       return addToast("You can only set a hospital destination after starting the trip.", "info");
     }
     try {
-      const user = getUserData();
-      await api.post(`/api/ride-request/${activeTrip.id}/destination`, { lat: h.lat, lng: h.lng }, { headers: { "x-auth-token": user?.token } });
+      // Send hospital name for patient sync
+      await api.post(`/api/ride-request/${activeTrip.id}/destination`, 
+        { lat: h.lat, lng: h.lng, name: h.name }, 
+        { headers: { "x-auth-token": user?.token } }
+      );
       addToast(`Destination set to ${h.name}`, "success");
       fetchActiveTrip();
     } catch (err) {
-      console.error("Set destination error:", err);
+      console.error("Failed to set destination", err);
       addToast("Failed to set destination", "error");
     }
-  }
+  };
 
   async function completeTrip(tripId) {
     try {
