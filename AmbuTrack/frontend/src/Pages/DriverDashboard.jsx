@@ -58,11 +58,20 @@ function fmtMins(mins) {
   return `${h}h ${m}m`;
 }
 
-function MapController({ center }) {
+function MapController({ center, isTracking }) {
   const map = useMap();
+  const hasInitialized = useRef(false);
+  
   useEffect(() => {
-    if (center) map.setView(center, map.getZoom());
-  }, [center, map]);
+    if (!center || !center[0] || !center[1] || !map) return;
+    
+    if (isTracking) {
+      map.setView(center, 16, { animate: true });
+    } else if (!hasInitialized.current) {
+      map.setView(center, 14);
+      hasInitialized.current = true;
+    }
+  }, [center, map, isTracking]);
   return null;
 }
 
@@ -211,9 +220,14 @@ export default function DriverDashboard() {
       if (!user?.token) return;
       const res = await api.get("/api/driver/active-trip", { headers: { "x-auth-token": user.token } });
       const trip = res.data || null;
+      // Ensure destination fields are parsed correctly
+      if (trip && trip.destination_lat) {
+        trip.destination_lat = parseFloat(trip.destination_lat);
+        trip.destination_lng = parseFloat(trip.destination_lng);
+      }
       setActiveTrip(trip);
       if (trip && trip.lat && trip.lng) {
-        setPairedPatient(prev => ({ ...prev, lat: trip.lat, lng: trip.lng }));
+        setPairedPatient({ lat: trip.lat, lng: trip.lng, name: trip.patient_name });
       }
     } catch (err) { console.error(err); }
   }, [getUserData]);
@@ -228,20 +242,22 @@ export default function DriverDashboard() {
   }, [getUserData]);
 
   useEffect(() => {
-    if (isOnline) {
-      const startTime = stats.onlineSince ? new Date(stats.onlineSince).getTime() : Date.now();
+    if (stats.onlineSince) {
+      const startTime = new Date(stats.onlineSince).getTime();
       const update = () => {
         const diff = Date.now() - startTime;
-        const totalMins = Math.floor(diff / 60000);
+        const totalMins = Math.floor(Math.max(0, diff) / 60000);
         setOnlineTime(`${Math.floor(totalMins / 60)}h ${totalMins % 60}m`);
       };
       update();
-      onlineTimerRef.current = setInterval(update, 30000);
+      onlineTimerRef.current = setInterval(update, 10000); // 10s live update
       return () => clearInterval(onlineTimerRef.current);
     } else {
-      setTimeout(() => setOnlineTime("0h 0m"), 0);
+      // Use a deferred update for React's best practices
+      const tid = setTimeout(() => setOnlineTime("0h 0m"), 0);
+      return () => clearTimeout(tid);
     }
-  }, [isOnline, stats.onlineSince]);
+  }, [stats.onlineSince]);
 
   const fetchHospitals = useCallback(async () => {
     if (!myLocation) return;
@@ -306,7 +322,11 @@ export default function DriverDashboard() {
     }, 5000);
 
     Promise.resolve().then(() => { fetchStats(); fetchActiveTrip(); fetchTripHistory(); });
-    statsIntervalRef.current = setInterval(() => { fetchStats(); fetchActiveTrip(); }, 15000);
+    statsIntervalRef.current = setInterval(() => { 
+      fetchStats(); 
+      fetchActiveTrip(); 
+      fetchTripHistory(); // Periodically refresh history too
+    }, 30000);
 
     socket.on("ride_confirmed", (data) => {
       setPairedPatient({ 
@@ -512,6 +532,9 @@ export default function DriverDashboard() {
         totalEarnings: (prev.totalEarnings || 0) + fareNum
       }));
 
+      // REFRESH FROM SERVER for final accuracy
+      fetchStats();
+      fetchTripHistory();
       setActiveTrip(null); 
       setPairedPatient(null);
       
@@ -574,16 +597,28 @@ export default function DriverDashboard() {
       {/* Header */}
       <div className="dash-header">
         <div className="dash-greeting">
-          <div className="dash-avatar">{initials}</div>
+          <div className="dash-avatar">
+            {user?.profile_picture ? (
+              <img 
+                src={`${api.defaults.baseURL || ''}${user.profile_picture}`} 
+                alt="Avatar" 
+                style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} 
+              />
+            ) : (
+              initials
+            )}
+          </div>
           <div className="dash-info">
             <h1>
               {new Date().getHours() < 12 ? "Good Morning" : new Date().getHours() < 18 ? "Good Afternoon" : "Good Evening"}, {driverName.split(" ")[0]}
             </h1>
             <div className="dash-subtitle">
               <span className="role-badge"><Ambulance size={11} /> Driver</span>
-              <span className={`status-dot ${isOnline ? "online" : "offline"}`} />
-              <span>{isOnline ? t('status_online') : t('status_offline')}</span>
-              {isOnline && <span className="online-timer">· {onlineTime}</span>}
+              <span className={`status-dot ${stats.status === 'ontrip' ? 'busy' : isOnline ? "online" : "offline"}`} />
+              <span>
+                {stats.status === 'ontrip' ? 'On Trip' : isOnline ? t('status_online') : t('status_offline')}
+              </span>
+              {(isOnline || stats.status === 'ontrip' || stats.onlineSince) && <span className="online-timer">· {onlineTime}</span>}
             </div>
           </div>
         </div>
@@ -748,7 +783,7 @@ export default function DriverDashboard() {
                   style={{ height: 400, width: "100%", borderRadius: 12, border: "1px solid var(--card-border)", zIndex: 10 }}
                 >
                   <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution='&copy; CARTO' />
-                  {myLocation && <MapController center={[myLocation.lat, myLocation.lng]} />}
+                  {myLocation && <MapController center={[myLocation.lat, myLocation.lng]} isTracking={activeTrip && activeTrip.status === 'started' && activeTrip.destination_lat} />}
                   {myLocation && <Marker position={[myLocation.lat, myLocation.lng]}><Popup>{t('nav_home')}</Popup></Marker>}
                   {/* Route logic: Status-based routing line */}
                   {activeTrip && activeTrip.status === 'started' && parseFloat(activeTrip.destination_lat) && myLocation ? (

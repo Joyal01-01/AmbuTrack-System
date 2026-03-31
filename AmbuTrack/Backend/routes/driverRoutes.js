@@ -16,7 +16,8 @@ router.post('/online', (req, res) => {
       db.query('SELECT id FROM drivers WHERE user_id=?', [user.id], (e, dr) => {
         if (e) return res.status(500).send(e);
         if (dr && dr.length) {
-          db.query('UPDATE drivers SET status=?, lat=?, lng=?, online_since=NOW() WHERE user_id=?', ['online', lat || null, lng || null, user.id]);
+          // Only set online_since if it's currently NULL
+          db.query('UPDATE drivers SET status=?, lat=?, lng=?, online_since = IF(online_since IS NULL, NOW(), online_since) WHERE user_id=?', ['online', lat || null, lng || null, user.id]);
           return res.json({ message: 'Driver Online', driverId: dr[0].id });
         }
         db.query('INSERT INTO drivers(user_id, name, lat, lng, status, online_since) VALUES(?,?,?,?,?,NOW())', [user.id, user.name || name || null, lat || null, lng || null, 'online'], (ie, ir) => {
@@ -29,7 +30,8 @@ router.post('/online', (req, res) => {
   }
 
   if (!driverId) return res.status(400).send('Missing driverId');
-  db.query('UPDATE drivers SET status=?, lat=?, lng=? WHERE id=?', ['online', lat || null, lng || null, driverId], (err) => {
+  // Maintenance case: Ensure online_since is handled here too
+  db.query('UPDATE drivers SET status=?, lat=?, lng=?, online_since = IF(online_since IS NULL, NOW(), online_since) WHERE id=?', ['online', lat || null, lng || null, driverId], (err) => {
     if (err) return res.status(500).send(err);
     res.json({ message: 'Driver Online' });
   });
@@ -283,7 +285,12 @@ router.post('/trip/:id/complete', (req, res) => {
       [distanceKm, fare, tripId, driver?.id],
       (err, result) => {
         if (err) console.error("Ignored Trips Error:", err.message);
-        const wasTrip = result && result.affectedRows > 0;
+        
+        // --- FIX: Update aggregate driver stats ---
+        if (result && result.affectedRows > 0) {
+          db.query("UPDATE drivers SET total_earnings = total_earnings + ?, completed_trips = completed_trips + 1 WHERE id = ?", [fare, driver.id]);
+        }
+        
         db.query("UPDATE ride_requests SET status='completed' WHERE id=? AND accepted_by=?", [tripId, user.id], () => {});
 
         // Notify patient via socket

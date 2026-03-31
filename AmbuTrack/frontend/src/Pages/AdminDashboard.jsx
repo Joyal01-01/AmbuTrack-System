@@ -542,7 +542,14 @@ export default function AdminDashboard() {
                         <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>System summary & driver statistics</div>
                       </div>
                     </div>
-                    <a href={`${api.defaults.baseURL || ''}/api/admin/reports/pdf?token=${user?.token}`} download style={{ display: 'block', textAlign: 'center', padding: '12px', background: '#ef4444', color: '#fff', borderRadius: 10, fontWeight: 700, textDecoration: 'none' }}>Download PDF</a>
+                    <a 
+                      href={`${api.defaults.baseURL || ''}/api/admin/reports/pdf?token=${user?.token}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ display: 'block', textAlign: 'center', padding: '12px', background: '#ef4444', color: '#fff', borderRadius: 10, fontWeight: 700, textDecoration: 'none' }}
+                    >
+                      Download PDF
+                    </a>
                   </div>
 
                   <div style={{ padding: 24, border: '1px solid var(--border)', borderRadius: 20, background: 'var(--background)' }}>
@@ -555,7 +562,14 @@ export default function AdminDashboard() {
                         <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Raw trip data for data analysis</div>
                       </div>
                     </div>
-                    <a href={`${api.defaults.baseURL || ''}/api/admin/reports/csv?token=${user?.token}`} download style={{ display: 'block', textAlign: 'center', padding: '12px', background: '#22c55e', color: '#fff', borderRadius: 10, fontWeight: 700, textDecoration: 'none' }}>Download CSV</a>
+                    <a 
+                      href={`${api.defaults.baseURL || ''}/api/admin/reports/csv?token=${user?.token}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ display: 'block', textAlign: 'center', padding: '12px', background: '#22c55e', color: '#fff', borderRadius: 10, fontWeight: 700, textDecoration: 'none' }}
+                    >
+                      Download CSV
+                    </a>
                   </div>
                </div>
             </div>
@@ -608,11 +622,20 @@ export default function AdminDashboard() {
                               </button>
                             </div>
                             {d.ocr_flags ? (
-                              <div style={{ fontSize: '0.85rem', color: d.ocr_flags.includes('✅') ? '#059669' : '#dc2626', background: d.ocr_flags.includes('✅') ? '#ecfdf5' : '#fef2f2', padding: 12, borderRadius: 8, border: '1px solid ' + (d.ocr_flags.includes('✅') ? '#10b98133' : '#ef444433'), lineHeight: 1.5 }}>
-                                <strong>System Note:</strong> {d.ocr_flags}
+                              <div style={{ fontSize: '0.82rem', padding: 14, borderRadius: 12, background: d.ocr_flags.includes('⚠️') ? 'rgba(239, 68, 68, 0.05)' : 'rgba(34, 197, 94, 0.05)', border: '1px solid ' + (d.ocr_flags.includes('⚠️') ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)'), color: 'var(--text)', lineHeight: 1.6 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontWeight: 800, color: d.ocr_flags.includes('⚠️') ? '#ef4444' : '#22c55e' }}>
+                                  <ShieldPlus size={14} /> AI Verification Report
+                                </div>
+                                {d.ocr_flags.split(' | ').map((flag, idx) => (
+                                  <div key={idx} style={{ marginBottom: 4, display: 'flex', gap: 6 }}>
+                                    <span>{flag}</span>
+                                  </div>
+                                ))}
                               </div>
                             ) : (
-                              <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem', fontStyle: 'italic' }}>OCR analysis has not been run for this application yet.</p>
+                              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.85rem', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <Clock size={14} /> AI review has not been performed yet.
+                              </p>
                             )}
                           </div>
                         </div>

@@ -688,12 +688,30 @@ app.delete('/api/user', (req, res) => {
 		if(err) return res.status(500).send(err);
 		if(!r.length) return res.status(401).send('Unauthorized');
 		const user = r[0];
-		// remove user and related driver/records (best-effort)
-		db.query('DELETE FROM users WHERE id=?',[user.id], (e)=>{
-			if(e) return res.status(500).send(e);
-			db.query('DELETE FROM drivers WHERE user_id=?',[user.id], ()=>{});
-			db.query('DELETE FROM ride_requests WHERE user_id=?',[user.id], ()=>{});
-			res.send({ ok:true });
+		const uid = user.id;
+		
+		// Delete child fields to satisfy any foreign keys first
+		const cleanupQueries = [
+			['DELETE FROM drivers WHERE user_id=?', [uid]],
+			['DELETE FROM ride_requests WHERE user_id=?', [uid]],
+			['DELETE FROM trips WHERE patient_id=? OR driver_id=?', [uid, uid]],
+			['DELETE FROM chat_messages WHERE sender_id=? OR receiver_id=?', [uid, uid]],
+			['DELETE FROM notifications WHERE user_id=?', [uid]],
+			['DELETE FROM wallet_transactions WHERE user_id=?', [uid]],
+			['DELETE FROM payments WHERE user_id=?', [uid]]
+		];
+		
+		let completed = 0;
+		cleanupQueries.forEach(([sql, params]) => {
+			db.query(sql, params, () => {
+				completed++;
+				if (completed === cleanupQueries.length) {
+					db.query('DELETE FROM users WHERE id=?', [uid], (e) => {
+						if(e) return res.status(500).send(e.sqlMessage || e);
+						res.send({ ok:true });
+					});
+				}
+			});
 		});
 	});
 });
@@ -1117,58 +1135,64 @@ app.post('/api/ride-request/:id/accept', (req,res)=>{
 						conn.query('UPDATE drivers SET status=? WHERE user_id=?',['ontrip', driver.id], (dErr)=>{
 							if(dErr){ return conn.rollback(()=>{ conn.release(); res.status(500).send(dErr); }); }
 
-							conn.commit(cmErr=>{
-								if(cmErr){ return conn.rollback(()=>{ conn.release(); res.status(500).send(cmErr); }); }
+							// --- FIX: Create entry in 'trips' table so that completion stats can be tracked ---
+							const insertTrip = "INSERT INTO trips (id, patient_id, driver_id, status, patient_lat, patient_lng, created_at) VALUES (?, ?, ?, 'accepted', ?, ?, NOW())";
+							conn.query(insertTrip, [id, rows[0].user_id || 0, driver.id, rows[0].lat || 0, rows[0].lng || 0], (tErr) => {
+								if (tErr) console.warn("Trip creation ignored (might already exist):", tErr.message);
+								
+								conn.commit(cmErr=>{
+									if(cmErr){ return conn.rollback(()=>{ conn.release(); res.status(500).send(cmErr); }); }
 
-								// notify patient socket
-								const registry = io.registry || (io.registry = {});
-								conn.query('SELECT user_id FROM ride_requests WHERE id=?',[id], (er2, rr)=>{
-									if(er2) { conn.release(); return res.status(200).send({ok:true}); }
-									const userId = rr[0].user_id;
+									// notify patient socket
+									const registry = io.registry || (io.registry = {});
+									conn.query('SELECT user_id FROM ride_requests WHERE id=?', [id], (er2, rr)=>{
+										if(er2 || !rr.length) { conn.release(); return res.status(200).send({ok:true}); }
+										const userId = rr[0].user_id;
 
-									// Fetch patient details (name, phone)
-									conn.query('SELECT name, phone FROM users WHERE id=?', [userId], (pErr, pRes)=>{
-										const patientName = pRes && pRes[0] ? pRes[0].name : 'Patient';
-										const patientPhone = pRes && pRes[0] ? pRes[0].phone : null;
+										// Fetch patient details (name, phone)
+										conn.query('SELECT name, phone FROM users WHERE id=?', [userId], (pErr, pRes)=>{
+											const patientName = pRes && pRes[0] ? pRes[0].name : 'Patient';
+											const patientPhone = pRes && pRes[0] ? pRes[0].phone : null;
 
-										// Find patient socket(s)
-										const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
-										// Find driver socket(s)
-										const driverSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === driver.id);
+											// Find patient socket(s)
+											const patientSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === userId);
+											// Find driver socket(s)
+											const driverSids = Object.keys(registry).filter(sid => registry[sid] && registry[sid].userId === driver.id);
 
-										// Fetch destination coordinates from the request just accepted
-										conn.query('SELECT destination_lat, destination_lng FROM ride_requests WHERE id=?', [id], (drErr, drRes) => {
-											const destLat = drRes && drRes[0] ? drRes[0].destination_lat : null;
-											const destLng = drRes && drRes[0] ? drRes[0].destination_lng : null;
+											// Fetch destination coordinates from the request just accepted
+											conn.query('SELECT destination_lat, destination_lng FROM ride_requests WHERE id=?', [id], (drErr, drRes) => {
+												const destLat = drRes && drRes[0] ? drRes[0].destination_lat : null;
+												const destLng = drRes && drRes[0] ? drRes[0].destination_lng : null;
 
-											patientSids.forEach(sid => {
-												io.to(sid).emit('ride_accepted', { 
-													driverId: driver.id, 
-													driverName: driver.name,
-													driverPhone: driver.phone
+												patientSids.forEach(sid => {
+													io.to(sid).emit('ride_accepted', { 
+														driverId: driver.id, 
+														driverName: driver.name,
+														driverPhone: driver.phone
+													});
 												});
-											});
-											
-											// Send SMS to patient about ride acceptance
-											if (patientPhone) {
-												sendSMS(patientPhone, `AmbuTrack: Your ambulance has been dispatched. Driver ${driver.name || ''} is on the way.`);
-											}
+												
+												// Send SMS to patient about ride acceptance
+												if (patientPhone) {
+													sendSMS(patientPhone, `AmbuTrack: Your ambulance has been dispatched. Driver ${driver.name || ''} is on the way.`);
+												}
 
-											driverSids.forEach(sid => {
-												io.to(sid).emit('ride_confirmed', { 
-													id: id,
-													patientSocketId: patientSids[0] || null,
-													patientId: userId,
-													patientName: patientName,
-													patientPhone: patientPhone,
-													destination_lat: destLat,
-													destination_lng: destLng
+												driverSids.forEach(sid => {
+													io.to(sid).emit('ride_confirmed', { 
+														id: id,
+														patientSocketId: patientSids[0] || null,
+														patientId: userId,
+														patientName: patientName,
+														patientPhone: patientPhone,
+														destination_lat: destLat,
+														destination_lng: destLng
+													});
 												});
+												conn.release(); // release connection after final query
+												res.send({ ok:true });
+												// Trigger Notification for Patient
+												triggerNotification(userId, 'TRIP_ACCEPTED', `Your ambulance request has been accepted by ${driver.name}.`);
 											});
-											conn.release(); // release connection after final query
-											res.send({ ok:true });
-											// Trigger Notification for Patient
-											triggerNotification(userId, 'TRIP_ACCEPTED', `Your ambulance request has been accepted by ${driver.name}.`);
 										});
 									});
 								});
@@ -1239,8 +1263,9 @@ app.post('/api/ride-request/:id/destination', (req, res) => {
 		// Update destination in ride_requests with numeric casting
 		const dLat = parseFloat(lat);
 		const dLng = parseFloat(lng);
+		const hName = name || 'Hospital';
 		
-		db.query('UPDATE ride_requests SET destination_lat=?, destination_lng=? WHERE id=? AND accepted_by=?', [dLat, dLng, id, driver.id], (uEr, result) => {
+		db.query('UPDATE ride_requests SET destination_lat=?, destination_lng=?, hospital_name=? WHERE id=? AND accepted_by=?', [dLat, dLng, hName, id, driver.id], (uEr, result) => {
 			if(uEr) return res.status(500).send(uEr);
 			if(result.affectedRows === 0) return res.status(404).send('Ride request not found or not assigned to you');
 
@@ -1306,24 +1331,48 @@ app.post('/api/ride-request/:id/complete', (req, res) => {
 		const driver = r[0];
 		if(driver.role !== 'driver') return res.status(403).send('Forbidden');
 
-		db.query("UPDATE ride_requests SET status='completed' WHERE id=? AND accepted_by=?", [id, driver.id], (uErr, result)=>{
-			if(uErr) return res.status(500).send(uErr);
-			if(result.affectedRows === 0) return res.status(404).send('Request not found or not assigned to you');
+		db.query("SELECT * FROM ride_requests WHERE id=?", [id], (qErr, qRows) => {
+			if (qErr || !qRows.length) return res.status(404).send('Request not found');
+			const ride = qRows[0];
+			
+			db.query("UPDATE ride_requests SET status='completed' WHERE id=? AND accepted_by=?", [id, driver.id], (uErr, result)=>{
+				if(uErr) return res.status(500).send(uErr);
+				if(result.affectedRows === 0) return res.status(404).send('Request not found or not assigned to you');
 
-			// Free the driver
-			db.query('UPDATE drivers SET status=? WHERE user_id=?', ['online', driver.id]);
+				// Free the driver
+				db.query('UPDATE drivers SET status=? WHERE user_id=?', ['online', driver.id]);
 
-			// Notify patient
-			const registry = io.registry || (io.registry = {});
-			db.query('SELECT user_id FROM ride_requests WHERE id=?', [id], (e2, rr)=>{
-				if(!e2 && rr.length){
-					const userId = rr[0].user_id;
-					Object.keys(registry).forEach(sid => { 
-						if(registry[sid] && registry[sid].userId === userId){ 
-							io.to(sid).emit('trip_completed', { id }); 
-						} 
-					});
-				}
+				// Archive to trips table for history/earnings
+				// Simulate distance/fare if not provided
+				const distance = ride.distance_km || (Math.random() * 10 + 2).toFixed(2); // 2-12km
+				const fare = ride.fare || Math.round(500 + (distance * 60)); // Base 500 + 60/km
+				
+				const tripData = [
+					ride.user_id, driver.id, 'completed', 
+					ride.lat, ride.lng, 
+					distance, fare, 
+					ride.created_at || new Date(), new Date()
+				];
+				
+				db.query(
+					"INSERT INTO trips (patient_id, driver_id, status, patient_lat, patient_lng, distance_km, fare, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					tripData,
+					(tErr) => {
+						if (tErr) console.error("Trip archive error:", tErr);
+						
+						// Update driver aggregator
+						db.query("UPDATE drivers SET total_earnings = total_earnings + ?, completed_trips = completed_trips + 1 WHERE user_id = ?", [fare, driver.id]);
+					}
+				);
+
+				// Notify patient
+				const registry = io.registry || (io.registry = {});
+				const userId = ride.user_id;
+				Object.keys(registry).forEach(sid => { 
+					if(registry[sid] && registry[sid].userId === userId){ 
+						io.to(sid).emit('trip_completed', { id }); 
+					} 
+				});
 				res.send({ ok:true });
 			});
 		});
@@ -1371,6 +1420,29 @@ app.get('/api/user/wallet', (req, res) => {
 	db.query('SELECT wallet_balance FROM users WHERE token=?', [token], (err, r)=>{
 		if(err || !r.length) return res.status(401).send('Unauthorized');
 		res.json({ balance: r[0].wallet_balance });
+	});
+});
+
+// GET /api/user/profile — Detailed user data
+app.get('/api/user/profile', (req, res) => {
+	const token = req.headers['x-auth-token'];
+	if(!token) return res.status(401).send('Unauthorized');
+	db.query('SELECT id, name, email, role, phone, approval_status, twofa_enabled, wallet_balance, profile_picture FROM users WHERE token=?', [token], (err, r)=>{
+		if(err || !r.length) return res.status(401).send('Unauthorized');
+		res.json(r[0]);
+	});
+});
+
+// POST /api/user/profile-picture — Upload profile photo
+app.post('/api/user/profile-picture', upload.single('profile_picture'), (req, res) => {
+	const token = req.headers['x-auth-token'];
+	if(!token) return res.status(401).send('Unauthorized');
+	if(!req.file) return res.status(400).send('No file uploaded');
+
+	const photoUrl = `/uploads/${req.file.filename}`;
+	db.query('UPDATE users SET profile_picture=? WHERE token=?', [photoUrl, token], (err, result) => {
+		if(err) return res.status(500).send(err);
+		res.json({ ok:true, profile_picture: photoUrl });
 	});
 });
 

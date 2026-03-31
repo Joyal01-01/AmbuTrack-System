@@ -50,9 +50,20 @@ const hospitalIcon = new L.Icon({
 });
 
 // Component to dynamically set map view
-function ChangeView({ center, zoom }) {
+function ChangeView({ center, zoom, isTracking }) {
   const map = useMap();
-  map.setView(center, zoom);
+  const hasInitialized = useRef(false);
+
+  useEffect(() => {
+    if (!center || !center[0] || !center[1] || !map) return;
+    
+    if (isTracking) {
+      map.setView(center, 16, { animate: true });
+    } else if (!hasInitialized.current) {
+      map.setView(center, zoom || 14);
+      hasInitialized.current = true;
+    }
+  }, [center, map, zoom, isTracking]);
   return null;
 }
 
@@ -279,10 +290,16 @@ export default function PatientDashboard() {
           } else if (['accepted', 'arrived', 'started'].includes(trip.status)) {
             // Restore OTP so it stays visible even after page reload or arrived event
             if (trip.otp) setRideOtp(trip.otp);
-            // If we have an active driver, we might want to fetch their info too
-            if (trip.accepted_by || trip.requested_driver_id) {
-               // Optional: fetch driver details if needed for UI persistence
+            // Restore destination if set
+            if (trip.destination_lat && trip.destination_lng) {
+              setSelectedHospital({ 
+                lat: parseFloat(trip.destination_lat), 
+                lng: parseFloat(trip.destination_lng), 
+                name: trip.hospital_name || 'Hospital' 
+              });
             }
+            // Ensure data is in activeTrip for the map to see
+            setActiveTrip(trip);
           }
         }
       } catch (err) {
@@ -873,12 +890,15 @@ export default function PatientDashboard() {
           <>
             <MapContainer center={[myLocation.lat, myLocation.lng]} zoom={14} style={{ width: '100%', height: '100%', zIndex: 1 }} zoomControl whenCreated={(m) => { mapRef.current = m; }}>
               <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution='&copy; CARTO' />
-              <ChangeView center={[myLocation.lat, myLocation.lng]} zoom={14} />
+              <ChangeView 
+                center={[myLocation.lat, myLocation.lng]} 
+                zoom={14} 
+                isTracking={requestStatus === 'started' && (selectedHospital || (activeTrip && activeTrip.destination_lat))} 
+              />
               <Marker position={[myLocation.lat, myLocation.lng]} icon={patientIcon}><Popup>You are here</Popup></Marker>
               {activeAmbulances.map(a => (<Marker key={a.driver_id || a.driver_user_id} position={[a.lat, a.lng]} icon={driverIcon} eventHandlers={{ click: () => { if (requestStatus === 'idle') setSelectedDriver(a); } }}><Popup><strong>{a.name}</strong><br />{a.vehicle_name || 'Ambulance'}<br />★ {a.rating || '5.0'}</Popup></Marker>))}
               
-              {/* Routing Logic */}
-              {/* Stable Routing Logic */}
+              {/* Stable Routing Logic with fallback to activeTrip data */}
               {['accepted', 'arrived'].includes(requestStatus) && selectedDriver && myLocation && (
                 <RoutingControl 
                   start={{ lat: selectedDriver.lat, lng: selectedDriver.lng }} 
@@ -886,12 +906,12 @@ export default function PatientDashboard() {
                   color="#3b82f6" /* Blue for pickup */
                 />
               )}
-              {requestStatus === 'started' && myLocation && (selectedHospital || nearbyHospitals[0]) && (
+              {requestStatus === 'started' && myLocation && (selectedHospital || (activeTrip && activeTrip.destination_lat)) && (
                 <RoutingControl 
                   start={myLocation} 
                   end={{ 
-                    lat: selectedHospital ? selectedHospital.lat : nearbyHospitals[0].lat, 
-                    lng: selectedHospital ? selectedHospital.lng : nearbyHospitals[0].lng 
+                    lat: selectedHospital ? selectedHospital.lat : activeTrip.destination_lat, 
+                    lng: selectedHospital ? selectedHospital.lng : activeTrip.destination_lng 
                   }} 
                   color="#10b981" /* Green for hospital travel */
                 />

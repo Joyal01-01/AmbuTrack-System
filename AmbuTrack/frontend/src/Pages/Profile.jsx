@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from 'react-i18next';
 import api from "../api";
 import "./Profile.css";
-import { User, Mail, Shield, ShieldCheck, Phone, MapPin, Edit3, Save, CheckCircle, AlertTriangle, Info, Lock } from "lucide-react";
+import { User, Mail, Shield, ShieldCheck, Phone, MapPin, Edit3, Save, CheckCircle, AlertTriangle, Info, Lock, Camera } from "lucide-react";
 
 function Toast({ message, type, onDone }) {
   useEffect(() => {
@@ -65,14 +65,60 @@ export default function Profile() {
     }
   };
 
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("profile_picture", file);
+    setLoading(true);
+
+    try {
+      const res = await api.post("/api/user/profile-picture", formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+      if (res.data.ok) {
+        const updatedUser = { ...user, profile_picture: res.data.profile_picture };
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+        window.location.reload(); // Refresh to update all dashboard headers
+      }
+    } catch {
+      addToast("Failed to upload profile picture", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="profile-container" style={{ minHeight: '100vh', background: 'var(--background)', padding: '2rem var(--container-padding)' }}>
       {toasts.map(t => <Toast key={t.id} message={t.message} type={t.type} onDone={() => removeToast(t.id)} />)}
       <div className="profile-card" style={{ maxWidth: 780, margin: '0 auto' }}>
         <div className="profile-header">
-          <div className="profile-avatar-wrapper">
-            {user?.name?.charAt(0).toUpperCase() || <User size={40} />}
+          <div 
+            className="profile-avatar-wrapper" 
+            onClick={() => document.getElementById('profile-file-input').click()}
+            style={{ cursor: 'pointer', position: 'relative' }}
+          >
+            {user?.profile_picture ? (
+              <img 
+                src={`${api.defaults.baseURL || ''}${user.profile_picture}`} 
+                alt="Profile" 
+                style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} 
+              />
+            ) : (
+              user?.name?.charAt(0).toUpperCase() || <User size={40} />
+            )}
+            <div className="avatar-overlay">
+              <Camera size={20} />
+            </div>
           </div>
+          <input 
+            type="file" 
+            id="profile-file-input" 
+            style={{ display: 'none' }} 
+            onChange={handleFileChange}
+            accept="image/*"
+          />
           <h2>{user?.name}</h2>
           <p>{user?.role?.toUpperCase()} {t('nav_dashboard')}</p>
         </div>

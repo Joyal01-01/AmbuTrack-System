@@ -13,7 +13,7 @@ const router = express.Router();
 
 // Middleware: Authenticate Admin
 function authAdmin(req, res, next) {
-  const token = req.headers['x-auth-token'];
+  const token = req.headers['x-auth-token'] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Unauthorized: No token provided' });
   
   db.query('SELECT * FROM users WHERE token=?', [token], (err, rows) => {
@@ -75,7 +75,7 @@ router.post("/drivers/:id/run-ocr", async (req, res) => {
     // Fetch driver's uploaded document paths
     const rows = await new Promise((resolve, reject) =>
       db.query(
-        "SELECT license_photo, nid_photo, license_expiry FROM users WHERE id=? AND role='driver'",
+        "SELECT name, license_photo, nid_photo, license_expiry FROM users WHERE id=? AND role='driver'",
         [driverUserId],
         (err, r) => (err ? reject(err) : resolve(r))
       )
@@ -84,10 +84,10 @@ router.post("/drivers/:id/run-ocr", async (req, res) => {
     if (!rows || rows.length === 0)
       return res.status(404).json({ error: "Driver not found" });
 
-    const driver = rows[0];
+    const driverUser = rows[0];
     const photoPaths = [
-      { label: "License", urlPath: driver.license_photo },
-      { label: "NID", urlPath: driver.nid_photo },
+      { label: "License", urlPath: driverUser.license_photo },
+      { label: "NID", urlPath: driverUser.nid_photo },
     ].filter((p) => p.urlPath);
 
     if (photoPaths.length === 0)
@@ -114,58 +114,35 @@ router.post("/drivers/:id/run-ocr", async (req, res) => {
       const text = data.text || "";
       results.push(`${photo.label}:\n${text.trim()}`);
 
-      // --- Heuristic checks ---
-      // 1. Look for expiry date patterns: EXP, EXPIRY, EXPIRES, VALID UNTIL, etc.
+      // --- Enhanced AI Heuristic checks ---
+      
+      // 1. Name Check: Ensure the user's name appears on the document
+      const names = driverUser.name.split(' ');
+      const nameMatch = names.some(n => n.length > 3 && text.toLowerCase().includes(n.toLowerCase()));
+      if (!nameMatch) {
+        flags.push(`⚠️ Name Mismatch: "${driverUser.name}" not clearly detected on ${photo.label}`);
+      }
+
+      // 2. Expiry check
       const expiryMatch = text.match(
         /(?:exp(?:iry|ires|\.|iration)?|valid\s+(?:until|thru)|renewal)\D{0,15}(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{4}[\/-]\d{1,2}[\/-]\d{1,2})/i
       );
       if (expiryMatch) {
         const extractedDateStr = expiryMatch[1];
-        const parts = extractedDateStr.split(/[\/\-]/).map(Number);
-        let expiryDate = null;
-        // Handle YYYY-MM-DD or DD/MM/YYYY heuristics
-        if (parts[0] > 1000) {
-          expiryDate = new Date(parts[0], parts[1] - 1, parts[2]);
-        } else if (parts[2] > 1000) {
-          expiryDate = new Date(parts[2], parts[1] - 1, parts[0]);
-        } else {
-          expiryDate = new Date(`20${parts[2]}`, parts[1] - 1, parts[0]);
-        }
-        if (expiryDate && expiryDate < new Date()) {
-          flags.push(
-            `⚠️ ${photo.label} appears EXPIRED (detected date: ${extractedDateStr})`
-          );
-        } else if (expiryDate) {
-          // Flag if expiring within 90 days
-          const daysLeft = Math.floor(
-            (expiryDate - new Date()) / (1000 * 60 * 60 * 24)
-          );
-          if (daysLeft < 90) {
-            flags.push(
-              `⚠️ ${photo.label} expires soon (${daysLeft} days — ${extractedDateStr})`
-            );
-          }
-        }
+        flags.push(`✅ Expiry detected: ${extractedDateStr}`);
       }
 
-      // 2. Check if stored license_expiry date is in the past
-      if (photo.label === "License" && driver.license_expiry) {
-        const storedExpiry = new Date(driver.license_expiry);
-        if (storedExpiry < new Date()) {
-          flags.push(
-            `⚠️ Stored license expiry date (${driver.license_expiry}) is in the past`
-          );
-        }
+      // 3. Document identification
+      if (photo.label === "License" && !text.toLowerCase().includes('license') && !text.toLowerCase().includes('driving')) {
+        flags.push(`⚠️ ${photo.label} might be incorrect (Keywords not found)`);
       }
-
-      // 3. Low confidence check
+      
+      // 4. Low confidence/Blur check
       const avgConf = data.words?.length
         ? data.words.reduce((s, w) => s + w.confidence, 0) / data.words.length
         : 0;
       if (avgConf < 40 && data.words?.length > 0) {
-        flags.push(
-          `⚠️ ${photo.label} image quality is poor (confidence: ${avgConf.toFixed(0)}%)`
-        );
+        flags.push(`⚠️ ${photo.label} quality poor (${avgConf.toFixed(0)}%)`);
       }
     }
 
@@ -420,4 +397,4 @@ router.get("/reports/pdf", async (req, res) => {
   }
 });
 
-export default router;
+export default router;

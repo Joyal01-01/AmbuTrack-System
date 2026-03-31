@@ -9,6 +9,30 @@ import {
   Wallet, History, MapPin, User, ChevronDown, Bell, Search, DollarSign, BarChart, HelpCircle, Menu, X, Sun, Moon, Monitor
 } from 'lucide-react';
 
+const navLinkStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  textDecoration: 'none',
+  fontSize: '0.88rem',
+  fontWeight: 600,
+  padding: '8px 14px',
+  borderRadius: '10px',
+  transition: 'all 0.2s ease',
+  color: 'var(--muted)',
+};
+
+const NavLink = ({ to, icon: Icon, children, isActive }) => (
+  <Link to={to} style={{
+    ...navLinkStyle,
+    color: isActive ? '#ef4444' : 'var(--muted)',
+    background: isActive ? 'rgba(239,68,68,0.08)' : 'transparent',
+  }}>
+    <Icon size={16} strokeWidth={2} />
+    <span>{children}</span>
+  </Link>
+);
+
 export default function Navbar() {
   const { darkMode, toggleDarkMode } = useTheme();
   const navigate = useNavigate();
@@ -53,32 +77,33 @@ export default function Navbar() {
     try {
       const raw = localStorage.getItem('user');
       const u = raw ? JSON.parse(raw) : null;
-      setUser(u);
-    } catch { setUser(null); }
+      setTimeout(() => setUser(prev => JSON.stringify(prev) !== JSON.stringify(u) ? u : prev), 0);
+    } catch { setTimeout(() => setUser(null), 0); }
   }, [location.pathname]);
+
+  const fetchNotifications = React.useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await api.get('/api/notifications', { headers: { 'x-auth-token': token } });
+      setNotifications(res.data || []);
+    } catch { /* silent */ }
+  }, [token]);
 
   useEffect(() => {
     if (token) {
-      fetchNotifications();
+      setTimeout(() => fetchNotifications(), 0);
       socket.on('new_notification', (n) => {
         setNotifications(prev => [n, ...prev]);
       });
     }
     return () => socket.off('new_notification');
-  }, [token]);
-
-  const fetchNotifications = async () => {
-    try {
-      const res = await api.get('/api/notifications', { headers: { 'x-auth-token': token } });
-      setNotifications(res.data || []);
-    } catch (e) { /* silent */ }
-  };
+  }, [token, fetchNotifications]);
 
   const markAsRead = async (id) => {
     try {
       await api.put(`/api/notifications/${id}/read`, {}, { headers: { 'x-auth-token': token } });
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-    } catch (e) { /* silent */ }
+    } catch { /* silent */ }
   };
 
   const clearNotifications = async () => {
@@ -87,7 +112,7 @@ export default function Navbar() {
         api.put(`/api/notifications/${n.id}/read`, {}, { headers: { 'x-auth-token': token } })
       ));
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-    } catch (e) { /* silent */ }
+    } catch { /* silent */ }
   };
 
   const handleSearch = async (term) => {
@@ -99,14 +124,14 @@ export default function Navbar() {
         .map(h => ({ ...h, type: 'hospital' }))
         .filter(item => item.name.toLowerCase().includes(term.toLowerCase()));
       setSearchResults(results.slice(0, 10));
-    } catch (e) { /* silent */ }
+    } catch { /* silent */ }
   };
 
   function logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('userId');
-    try { socket.disconnect(); } catch (e) { }
+    try { socket.disconnect(); } catch (e) { console.error(e); }
     navigate('/login');
   }
 
@@ -126,17 +151,6 @@ export default function Navbar() {
     transition: 'all 0.2s', 
     position: 'relative'
   };
-
-  const NavLink = ({ to, icon: Icon, children }) => (
-    <Link to={to} style={{
-      ...navLinkStyle,
-      color: isActive(to) ? '#ef4444' : 'var(--muted)',
-      background: isActive(to) ? 'rgba(239,68,68,0.08)' : 'transparent',
-    }}>
-      <Icon size={16} strokeWidth={2} />
-      <span>{children}</span>
-    </Link>
-  );
 
   return (
     <>
@@ -176,25 +190,25 @@ export default function Navbar() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 {user?.role === 'patient' && (
                   <>
-                    <NavLink to="/dashboard" icon={LayoutDashboard}>Home</NavLink>
-                    <NavLink to="/nearby" icon={MapPin}>Book</NavLink>
-                    <NavLink to="/wallet" icon={Wallet}>Wallet</NavLink>
-                    <NavLink to="/history" icon={History}>History</NavLink>
+                    <NavLink to="/dashboard" icon={LayoutDashboard} isActive={isActive('/dashboard')}>Home</NavLink>
+                    <NavLink to="/nearby" icon={MapPin} isActive={isActive('/nearby')}>Book</NavLink>
+                    <NavLink to="/wallet" icon={Wallet} isActive={isActive('/wallet')}>Wallet</NavLink>
+                    <NavLink to="/history" icon={History} isActive={isActive('/history')}>History</NavLink>
                   </>
                 )}
                 {user?.role === 'driver' && (
                   <>
-                    <NavLink to="/driver-dashboard" icon={LayoutDashboard}>Dashboard</NavLink>
-                    <NavLink to="/requests" icon={Ambulance}>Requests</NavLink>
-                    <NavLink to="/earnings" icon={DollarSign}>Earnings</NavLink>
-                    <NavLink to="/settings" icon={Settings}>Settings</NavLink>
+                    <NavLink to="/driver-dashboard" icon={LayoutDashboard} isActive={isActive('/driver-dashboard')}>Dashboard</NavLink>
+                    <NavLink to="/requests" icon={Ambulance} isActive={isActive('/requests')}>Requests</NavLink>
+                    <NavLink to="/earnings" icon={DollarSign} isActive={isActive('/earnings')}>Earnings</NavLink>
+                    <NavLink to="/settings" icon={Settings} isActive={isActive('/settings')}>Settings</NavLink>
                   </>
                 )}
                 {user?.role === 'admin' && (
                   <>
-                    <NavLink to="/admin-dashboard" icon={Monitor}>Dashboard</NavLink>
-                    <NavLink to="/manage-users" icon={Users}>Users</NavLink>
-                    <NavLink to="/reports" icon={BarChart}>Reports</NavLink>
+                    <NavLink to="/admin-dashboard" icon={Monitor} isActive={isActive('/admin-dashboard')}>Dashboard</NavLink>
+                    <NavLink to="/manage-users" icon={Users} isActive={isActive('/manage-users')}>Users</NavLink>
+                    <NavLink to="/reports" icon={BarChart} isActive={isActive('/reports')}>Reports</NavLink>
                   </>
                 )}
               </div>
@@ -309,9 +323,17 @@ export default function Navbar() {
                     <div style={{
                       width: 30, height: 30, background: '#ef4444', borderRadius: '50%',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
-                      fontSize: '0.8rem', fontWeight: 800
+                      fontSize: '0.8rem', fontWeight: 800, overflow: 'hidden'
                     }}>
-                      {user?.name?.charAt(0).toUpperCase() || <User size={16} />}
+                      {user?.profile_picture ? (
+                        <img 
+                          src={`${api.defaults.baseURL || ''}${user.profile_picture}`} 
+                          alt="Profile" 
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        />
+                      ) : (
+                        user?.name?.charAt(0).toUpperCase() || <User size={16} />
+                      )}
                     </div>
                     {!isMobile && (
                       <div style={{ textAlign: 'left' }}>
@@ -432,19 +454,6 @@ export default function Navbar() {
   );
 }
 
-const navLinkStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  textDecoration: 'none',
-  fontSize: '0.88rem',
-  fontWeight: 600,
-  padding: '8px 14px',
-  borderRadius: '10px',
-  transition: 'all 0.2s ease',
-  color: 'var(--muted)',
-};
-
 const mobileNavLink = {
   display: 'block',
   padding: '12px 8px',
@@ -454,8 +463,6 @@ const mobileNavLink = {
   textDecoration: 'none',
   borderBottom: '1px solid var(--border)',
 };
-
-
 
 const dropdownItemStyle = {
   display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
